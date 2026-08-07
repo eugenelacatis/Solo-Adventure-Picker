@@ -1,0 +1,13 @@
+.map-page {
+  max-width: 800px;
+  margin: 2rem auto;
+  padding: 0 1rem;
+  text-align: center;
+}
+
+.map-container {
+  height: 500px;
+  width: 100%;
+  border-radius: 12px;
+  margin-top: 1rem;
+}
