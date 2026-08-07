@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import './HomePage.css'
 
@@ -23,8 +23,8 @@ function HomePage() {
       <h1>Welcome to Solo Adventure Picker</h1>
       <p>Select your region to get started:</p>
 
-      <select 
-        value={selectedRegion} 
+      <select
+        value={selectedRegion}
         onChange={(e) => setSelectedRegion(e.target.value)}
       >
         <option disabled value="">-- Select Region --</option>
@@ -35,8 +35,8 @@ function HomePage() {
         ))}
       </select>
 
-      <button 
-        disabled={!selectedRegion} 
+      <button
+        disabled={!selectedRegion}
         onClick={startAdventure}
       >
         Start Adventure
@@ -45,4 +45,4 @@ function HomePage() {
   )
 }
 
-export default HomePage 
+export default HomePage
