@@ -62,19 +62,40 @@
   text-align: center;
 }
 
-.tags {
+.journal-entry {
+  margin: 1.5rem 0;
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 0.5rem;
-  margin: 1rem 0;
-  justify-content: center;
 }
 
-.tag {
-  background-color: #e9ecef;
-  padding: 0.3rem 0.8rem;
-  border-radius: 15px;
-  font-size: 0.9rem;
+.journal-entry textarea {
+  min-height: 80px;
+  padding: 0.6rem;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.journal-entry button {
+  align-self: flex-start;
+  background-color: #4CAF50;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.journal-entry button:disabled {
+  background-color: #a5d6a7;
+  cursor: not-allowed;
+}
+
+.journal-confirmation {
+  color: #4CAF50;
+  font-weight: 500;
 }
 
 .toggle-details {
@@ -89,6 +110,31 @@
 
 .toggle-details:hover {
   color: #333;
+}
+
+.visit-tracker {
+  margin-top: 1rem;
+  text-align: center;
+}
+
+.mark-visited-btn {
+  background-color: #646cff;
+  color: white;
+  border: none;
+  padding: 0.6rem 1.2rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.mark-visited-btn:disabled {
+  background-color: #b3b6f7;
+  cursor: not-allowed;
+}
+
+.visit-confirmation {
+  color: #646cff;
+  font-weight: 500;
+  margin-top: 0.5rem;
 }
 
 .reroll-btn {
