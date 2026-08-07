@@ -1,27 +1,67 @@
 package config
 
 import (
-	"context"
+	"database/sql"
 	"log"
-	"time"
 
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	_ "modernc.org/sqlite"
 )
 
-var Client *mongo.Client
+const schema = `
+CREATE TABLE IF NOT EXISTS adventures (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	name        TEXT NOT NULL,
+	type        TEXT,
+	region      TEXT NOT NULL,
+	scenery     TEXT,
+	effort      TEXT,
+	duration    TEXT,
+	description TEXT,
+	xp_value    INTEGER,
+	lat         REAL,
+	lng         REAL
+);
 
-func InitDB(uri string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+CREATE TABLE IF NOT EXISTS users (
+	id       INTEGER PRIMARY KEY AUTOINCREMENT,
+	user_id  TEXT NOT NULL UNIQUE,
+	total_xp INTEGER NOT NULL DEFAULT 0
+);
 
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
+CREATE TABLE IF NOT EXISTS journal_entries (
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	user_id      TEXT NOT NULL,
+	adventure_id TEXT NOT NULL,
+	text         TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS visited_adventures (
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	user_id      TEXT NOT NULL,
+	adventure_id TEXT NOT NULL,
+	lat          REAL NOT NULL,
+	lng          REAL NOT NULL
+);
+`
+
+// InitDB opens the SQLite database at the given path (or ":memory:" for an
+// in-memory database) and ensures the schema exists.
+func InitDB(path string) *sql.DB {
+	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := client.Ping(ctx, nil); err != nil {
+	if err := db.Ping(); err != nil {
 		log.Fatal(err)
 	}
-	log.Println("Connected to Mongo")
-	Client = client
+	if err := createSchema(db); err != nil {
+		log.Fatal(err)
+	}
+	log.Println("Connected to SQLite at", path)
+	return db
+}
+
+func createSchema(db *sql.DB) error {
+	_, err := db.Exec(schema)
+	return err
 }

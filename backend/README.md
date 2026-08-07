@@ -20,7 +20,15 @@ Go backend with AI-powered adventure enhancement using Google Gemini.
    - Create a new API key
    - Add it to your `.env` file
 
-4. **Run with Docker:**
+4. **Run locally:**
+   ```bash
+   go run scripts/seed.go   # first run only, seeds the SQLite database
+   go run main.go
+   ```
+   No database server required — data is stored in a local SQLite file
+   (`solo-adventure-picker.db` by default, override with `DB_PATH`).
+
+5. **Or run with Docker:**
    ```bash
    docker-compose up --build
    ```
@@ -35,7 +43,7 @@ Go backend with AI-powered adventure enhancement using Google Gemini.
 
 ### API Enhancement
 The `/random` endpoint now:
-1. Fetches a random adventure from MongoDB
+1. Fetches a random adventure from SQLite
 2. Enhances the description using AI based on user preferences
 3. Sets dynamic XP values based on adventure type
 4. Returns personalized content
@@ -45,7 +53,7 @@ The `/random` endpoint now:
 ```
 Routes → Adventure Agent → Gemini API
   ↓           ↓              ↓
-Database → Enhanced Adventure → Response
+SQLite → Enhanced Adventure → Response
 ```
 
 ## Future Features

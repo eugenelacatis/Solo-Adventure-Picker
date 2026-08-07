@@ -10,9 +10,16 @@ import (
 )
 
 func main() {
-	config.InitDB(os.Getenv("MONGO_URI"))
-	routes.RegisterRoutes()
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "solo-adventure-picker.db"
+	}
+	db := config.InitDB(dbPath)
+	defer db.Close()
+
+	mux := http.NewServeMux()
+	routes.RegisterRoutes(mux, db)
 
 	fmt.Println("Server running at http://localhost:8080")
-	http.ListenAndServe(":8080", nil)
+	http.ListenAndServe(":8080", mux)
 }

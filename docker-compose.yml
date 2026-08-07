@@ -1,26 +1,4 @@
 services:
-  mongo:
-    image: mongo:7
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo-data:/data/db
-    restart: unless-stopped
-
-# TODO
-# Low priority
-# Seed and backend both download the same dependencies
-# Find a way to cache one set of dependencies and have the other rely on it
-
-  seed:
-    image: solo-adventure-picker-backend
-    command: go run scripts/seed.go
-    environment:
-      - MONGO_URI=mongodb://mongo:27017/solo
-    depends_on:
-      - mongo
-    restart: "no"
-
   backend:
     build:
       context: ./backend
@@ -30,10 +8,7 @@ services:
     volumes:
       - ./backend:/app
     environment:
-      - MONGO_URI=mongodb://mongo:27017/solo
-    depends_on:
-      - mongo
-      - seed
+      - DB_PATH=/app/solo-adventure-picker.db
 
   frontend:
     build: ./frontend
@@ -49,5 +24,3 @@ services:
       - vite_api_url=http://localhost:8080
     depends_on:
       - backend
-volumes:
-  mongo-data:
