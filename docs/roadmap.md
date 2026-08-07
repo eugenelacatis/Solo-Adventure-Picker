@@ -13,46 +13,48 @@ This roadmap outlines the development phases for turning the app into a gamified
 
 ---
 
-##  Phase 1 – MVP Loop
+##  Phase 1 – Core Loop (COMPLETE, 2026-08-07)
 - [x] Design and apply animated card transition when rerolling
 - [x] Display XP value for adventure types
-- [ ] Implement XP counter per user (mock data first)
-- [ ] Create journal input box (with basic validation)
-- [ ] Award bonus XP on journal submission
-- [ ] Create and store user ID in localStorage (pre-auth)
+- [x] Migrate storage from MongoDB to SQLite (no infra dependency, see backend README)
+- [x] Add real lat/lng coordinates to adventures
+- [x] Create and store user ID in localStorage (pre-auth)
+- [x] Implement XP counter per user, persisted via `/xp/{userId}` and `/xp/{userId}/add`
+- [x] Derive user level from total XP (`services.LevelForXp`)
+- [x] Create journal input box + submit to `/journal/{userId}` (awards bonus XP)
+- [x] Migrate frontend from JS to TypeScript
 - [ ] Add adventure filters (type, mood, etc.)
 - [ ] Style page for mobile responsiveness
-- [ ] Log daily session in `SESSION_LOG.md`
 
 ---
 
-##  Phase 2 – Gamification Layer
-- [ ] Add user levels based on XP
-- [ ] Animate level-up (popup or card glow)
-- [ ] Create and display achievements (e.g., 5 hikes, 1 journal entry)
+##  Phase 2 – Fog of War Map (COMPLETE, 2026-08-07)
+- [x] Real GPS map via Leaflet + OpenStreetMap (no API key required)
+- [x] "Mark as Visited" action records adventureId/lat/lng against the user
+- [x] `GET /visited/{userId}` backend endpoint for the map to consume
+- [x] Fog reveal: circle overlay around each visited coordinate (5km radius)
+- [x] Mark visited adventures as pins on the map
+- [ ] Animate fog clearing
+- [ ] Show user's current region/progress summary
+
+---
+
+##  Phase 3 – Achievements (COMPLETE, 2026-08-07)
+- [x] Compute milestones on demand from visited-adventure/journal counts
+      (`services.ComputeAchievements`) — no background job, no extra persistence
+- [x] `GET /achievements/{userId}` endpoint
 - [ ] Add reroll limit (reset daily)
 - [ ] Reward reroll tokens from achievements or journaling
-- [ ] Daily quest system (e.g., “Do 1 new thing”)
-- [ ] Add `/docs/xp-system.md` and define XP formula
+- [ ] Daily quest system (e.g., "Do 1 new thing")
 - [ ] Style gear badges or perks (no functionality yet)
 
 ---
 
-##  Phase 3 – World Map & Fog of War
-- [ ] Create map region system (tile/grid or real map)
-- [ ] Apply fog overlay and track which tiles are cleared
-- [ ] Link adventures to map locations
-- [ ] Mark visited adventures on the map
-- [ ] Animate fog clearing
-- [ ] Show user’s current region/progress
-- [ ] Add `/docs/fog-of-war.md` to explain logic + UX plan
-
----
-
 ##  Phase 4 – Persistent User System
-- [ ] Add proper user auth (Supabase or custom JWT)
-- [ ] Store visited adventures and XP in MongoDB
-- [ ] Load journal entries from DB
+- [ ] Add proper user auth (Supabase or custom JWT) — replaces the localStorage
+      client ID from Phase 1
+- [x] Store visited adventures and XP (done in Phase 1/2, via SQLite instead of MongoDB)
+- [ ] Load journal entries from DB for display (currently write-only from the UI)
 - [ ] Let users view past adventures
 - [ ] Add settings page for account and preferences
 
