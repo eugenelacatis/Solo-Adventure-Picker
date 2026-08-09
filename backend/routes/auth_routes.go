@@ -1,13 +1,28 @@
 package routes
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 
 	"github.com/eugenelacatis/solo-adventure-picker/services"
 	"github.com/eugenelacatis/solo-adventure-picker/utils"
 )
+
+// newUserId generates a fresh random user identifier, mirroring the
+// approach services.CreateSession uses for session tokens. Signup used to
+// accept the client-supplied anonymousUserId here instead — with an
+// INSERT ... ON CONFLICT DO UPDATE, that let a second signup in the same
+// browser silently overwrite the first account's email and password hash.
+func newUserId() (string, error) {
+	idBytes := make([]byte, 16)
+	if _, err := rand.Read(idBytes); err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(idBytes), nil
+}
 
 const sessionCookieName = "session"
 
@@ -57,9 +72,8 @@ func requireAuth(db *sql.DB, next func(w http.ResponseWriter, r *http.Request, u
 func registerAuthRoutes(mux *http.ServeMux, db *sql.DB) {
 	mux.HandleFunc("/auth/signup", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Email           string `json:"email"`
-			Password        string `json:"password"`
-			AnonymousUserId string `json:"anonymousUserId"`
+			Email    string `json:"email"`
+			Password string `json:"password"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Email == "" || body.Password == "" {
 			utils.WriteJSONError(w, http.StatusBadRequest, utils.APIError{
@@ -88,9 +102,7 @@ func registerAuthRoutes(mux *http.ServeMux, db *sql.DB) {
 			return
 		}
 
-		userId := body.AnonymousUserId
-
-		tx, err := db.Begin()
+		userId, err := newUserId()
 		if err != nil {
 			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
 				Error: "Failed to create account.",
@@ -98,22 +110,12 @@ func registerAuthRoutes(mux *http.ServeMux, db *sql.DB) {
 			})
 			return
 		}
-		defer tx.Rollback()
 
-		_, err = tx.Exec(
-			`INSERT INTO users (user_id, email, password_hash) VALUES (?, ?, ?)
-			 ON CONFLICT(user_id) DO UPDATE SET email = excluded.email, password_hash = excluded.password_hash`,
+		_, err = db.Exec(
+			`INSERT INTO users (user_id, email, password_hash) VALUES (?, ?, ?)`,
 			userId, body.Email, passwordHash,
 		)
 		if err != nil {
-			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
-				Error: "Failed to create account.",
-				Code:  1014,
-			})
-			return
-		}
-
-		if err := tx.Commit(); err != nil {
 			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
 				Error: "Failed to create account.",
 				Code:  1014,

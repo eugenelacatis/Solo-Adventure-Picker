@@ -8,12 +8,11 @@ import (
 	"testing"
 )
 
-func signup(t *testing.T, mux *http.ServeMux, email, password, anonymousUserId string) *httptest.ResponseRecorder {
+func signup(t *testing.T, mux *http.ServeMux, email, password string) *httptest.ResponseRecorder {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{
-		"email":           email,
-		"password":        password,
-		"anonymousUserId": anonymousUserId,
+		"email":    email,
+		"password": password,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/auth/signup", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -49,7 +48,7 @@ func TestSignupHandler_CreatesAccountAndReturnsSessionCookie(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, db)
 
-	rec := signup(t, mux, "hiker@example.com", "hunter2", "anon-1")
+	rec := signup(t, mux, "hiker@example.com", "hunter2")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
@@ -61,52 +60,52 @@ func TestSignupHandler_DuplicateEmail_Returns409(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, db)
 
-	signup(t, mux, "hiker@example.com", "hunter2", "anon-1")
-	rec := signup(t, mux, "hiker@example.com", "different-password", "anon-2")
+	signup(t, mux, "hiker@example.com", "hunter2")
+	rec := signup(t, mux, "hiker@example.com", "different-password")
 
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusConflict, rec.Body.String())
 	}
 }
 
-func TestSignupHandler_RekeysAnonymousData(t *testing.T) {
+// TestSignupHandler_SecondSignupDoesNotOverwriteFirstAccount guards against
+// the account-takeover bug this milestone fixed: signup used to accept a
+// client-supplied anonymousUserId and upsert onto it, so two signups with
+// the same (client-controlled) ID in the same browser session would
+// silently overwrite the first account's email and password hash. Signup
+// now always mints a fresh server-side user_id, so two signups can never
+// collide on identity.
+func TestSignupHandler_SecondSignupDoesNotOverwriteFirstAccount(t *testing.T) {
 	db := newTestDB(t)
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, db)
 
-	// All XP/journal/visited routes require a session, so there is no live
-	// HTTP path for an anonymous userId to accrue data pre-signup today.
-	// Seed a row directly to model that case at the DB layer (e.g. legacy
-	// data, or a future anonymous-write path) and confirm signup still
-	// binds it to the new account correctly.
-	_, err := db.Exec(
-		`INSERT INTO users (user_id, total_xp) VALUES (?, ?)`,
-		"anon-1", 150,
-	)
-	if err != nil {
-		t.Fatalf("setup: failed to seed anonymous user XP: %v", err)
+	firstRec := signup(t, mux, "first@example.com", "first-password")
+	if firstRec.Code != http.StatusOK {
+		t.Fatalf("first signup status = %d, want %d; body: %s", firstRec.Code, http.StatusOK, firstRec.Body.String())
+	}
+	var first struct {
+		UserId string `json:"userId"`
+	}
+	json.Unmarshal(firstRec.Body.Bytes(), &first)
+
+	secondRec := signup(t, mux, "second@example.com", "second-password")
+	if secondRec.Code != http.StatusOK {
+		t.Fatalf("second signup status = %d, want %d; body: %s", secondRec.Code, http.StatusOK, secondRec.Body.String())
+	}
+	var second struct {
+		UserId string `json:"userId"`
+	}
+	json.Unmarshal(secondRec.Body.Bytes(), &second)
+
+	if first.UserId == second.UserId {
+		t.Fatalf("both signups got the same userId %q, want distinct accounts", first.UserId)
 	}
 
-	signupRec := signup(t, mux, "hiker@example.com", "hunter2", "anon-1")
-	if signupRec.Code != http.StatusOK {
-		t.Fatalf("signup status = %d, want %d; body: %s", signupRec.Code, http.StatusOK, signupRec.Body.String())
-	}
-	cookie := sessionCookie(t, signupRec)
-
-	getReq := httptest.NewRequest(http.MethodGet, "/xp", nil)
-	getReq.AddCookie(cookie)
-	getRec := httptest.NewRecorder()
-	mux.ServeHTTP(getRec, getReq)
-
-	if getRec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body: %s", getRec.Code, http.StatusOK, getRec.Body.String())
-	}
-	var body struct {
-		TotalXp int `json:"totalXp"`
-	}
-	json.Unmarshal(getRec.Body.Bytes(), &body)
-	if body.TotalXp != 150 {
-		t.Errorf("TotalXp = %d, want 150 (re-keyed from anonymous user)", body.TotalXp)
+	// The first account's credentials must still work.
+	loginRec := login(t, mux, "first@example.com", "first-password")
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login for first account status = %d, want %d; body: %s", loginRec.Code, http.StatusOK, loginRec.Body.String())
 	}
 }
 
@@ -115,7 +114,7 @@ func TestLoginHandler_CorrectCredentials_ReturnsSessionCookie(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, db)
 
-	signup(t, mux, "hiker@example.com", "hunter2", "anon-1")
+	signup(t, mux, "hiker@example.com", "hunter2")
 
 	rec := login(t, mux, "hiker@example.com", "hunter2")
 	if rec.Code != http.StatusOK {
@@ -129,7 +128,7 @@ func TestLoginHandler_WrongPassword_Returns401(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, db)
 
-	signup(t, mux, "hiker@example.com", "hunter2", "anon-1")
+	signup(t, mux, "hiker@example.com", "hunter2")
 
 	rec := login(t, mux, "hiker@example.com", "wrong-password")
 	if rec.Code != http.StatusUnauthorized {
@@ -153,7 +152,7 @@ func TestAuthMeHandler_ValidSession_ReturnsUser(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, db)
 
-	signupRec := signup(t, mux, "hiker@example.com", "hunter2", "anon-1")
+	signupRec := signup(t, mux, "hiker@example.com", "hunter2")
 	cookie := sessionCookie(t, signupRec)
 
 	req := httptest.NewRequest(http.MethodGet, "/auth/me", nil)
@@ -192,7 +191,7 @@ func TestLogoutHandler_InvalidatesSession(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, db)
 
-	signupRec := signup(t, mux, "hiker@example.com", "hunter2", "anon-1")
+	signupRec := signup(t, mux, "hiker@example.com", "hunter2")
 	cookie := sessionCookie(t, signupRec)
 
 	logoutReq := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
