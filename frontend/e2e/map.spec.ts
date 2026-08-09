@@ -15,9 +15,24 @@ test.beforeEach(async ({ page }) => {
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify([
-        { adventureId: 'adv-1', lat: 37.9235, lng: -122.5965 },
-        { adventureId: 'adv-2', lat: 37.5136, lng: -121.8310 },
+        { adventureId: 'adv-1', name: 'Mount Tam', lat: 37.9235, lng: -122.5965 },
+        { adventureId: 'adv-2', name: 'Sunol Regional Wilderness', lat: 37.5136, lng: -121.8310 },
       ]),
+    })
+  )
+  // MapPage now also renders the HUD, which fetches XP and achievements.
+  await page.route('http://localhost:8080/xp', route =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ totalXp: 250, level: 2, nextLevelXp: 300, alreadyVisited: false }),
+    })
+  )
+  await page.route('http://localhost:8080/achievements', route =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([{ id: 'first-adventure', name: 'First Adventure' }]),
     })
   )
 })

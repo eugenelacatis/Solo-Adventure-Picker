@@ -88,7 +88,10 @@ describe('AdventurePage', () => {
       if (String(url).includes('/random')) {
         return Promise.resolve({ ok: true, json: async () => ({ id: 1, name: 'Mount Tamalpais', region: 'bay-area', xpValue: 150, lat: 37.9235, lng: -122.5965 }) })
       }
-      return Promise.resolve({ ok: true, json: async () => ({ totalXp: 150, level: 2 }) })
+      if (String(url).includes('/visited')) {
+        return Promise.resolve({ ok: true, json: async () => ({ totalXp: 150, level: 2, nextLevelXp: 300, alreadyVisited: false }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ totalXp: 150, level: 2, nextLevelXp: 300, alreadyVisited: false }) })
     })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -105,11 +108,40 @@ describe('AdventurePage', () => {
       expect(screen.getByText('Marked as visited!')).toBeInTheDocument()
     })
 
-    const visitCall = fetchMock.mock.calls.find(call => String(call[0]).includes('/xp/') && String(call[0]).includes('/add'))
+    const visitCall = fetchMock.mock.calls.find(call => String(call[0]).includes('/visited') && call[1]?.method === 'POST')
     expect(visitCall).toBeTruthy()
     const requestBody = JSON.parse(visitCall![1].body)
     expect(requestBody.adventureId).toBe('1')
-    expect(requestBody.lat).toBe(37.9235)
-    expect(requestBody.lng).toBe(-122.5965)
+    expect(requestBody.lat).toBeUndefined()
+    expect(requestBody.lng).toBeUndefined()
+  })
+
+  it('shows an already-visited notice when the backend reports a repeat visit', async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (String(url).includes('/auth/me')) {
+        return Promise.resolve({ ok: true, json: async () => ({ userId: 'abc', email: 'hiker@example.com' }) })
+      }
+      if (String(url).includes('/random')) {
+        return Promise.resolve({ ok: true, json: async () => ({ id: 1, name: 'Mount Tamalpais', region: 'bay-area', xpValue: 150 }) })
+      }
+      if (String(url).includes('/visited') && init?.method === 'POST') {
+        return Promise.resolve({ ok: true, json: async () => ({ totalXp: 150, level: 2, nextLevelXp: 300, alreadyVisited: true }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ totalXp: 150, level: 2, nextLevelXp: 300, alreadyVisited: false }) })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const user = userEvent.setup()
+    renderPage()
+
+    await waitFor(() => {
+      expect(screen.getByText('Mount Tamalpais')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: /mark as visited/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/no new xp/i)).toBeInTheDocument()
+    })
   })
 })

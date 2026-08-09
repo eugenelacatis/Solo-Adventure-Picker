@@ -1,17 +1,11 @@
 import { useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { demoAdventures } from '../data/demoAdventures.ts'
+import { regions } from '../data/regions.ts'
 import { capitalizeWords } from '../utils/formatting.ts'
+import { useAuth } from '../context/AuthContext.tsx'
 import type { Adventure } from '../types.ts'
 import './HomePage.css'
-
-const regions = [
-  { value: 'bay-area', label: 'Bay Area' },
-  { value: 'north-bay', label: 'North Bay' },
-  { value: 'south-bay', label: 'South Bay' },
-  { value: 'east-bay', label: 'East Bay' },
-  // expand this as needed
-]
 
 function pickDemoAdventure(region: string, exclude?: Adventure): Adventure {
   const candidates = demoAdventures.filter(a => a.region === region)
@@ -22,6 +16,7 @@ function pickDemoAdventure(region: string, exclude?: Adventure): Adventure {
 }
 
 function HomePage() {
+  const { user } = useAuth()
   const [selectedRegion, setSelectedRegion] = useState('bay-area')
   const [demoCard, setDemoCard] = useState<Adventure>(() => pickDemoAdventure('bay-area'))
 
@@ -60,8 +55,14 @@ function HomePage() {
       <button onClick={reroll}>Reroll</button>
 
       <div className="auth-links">
-        <Link to="/signup">Sign Up</Link>
-        <Link to="/login">Log In</Link>
+        {user ? (
+          <Link to="/adventure">Continue your adventure</Link>
+        ) : (
+          <>
+            <Link to="/signup">Sign Up</Link>
+            <Link to="/login">Log In</Link>
+          </>
+        )}
       </div>
     </div>
   )

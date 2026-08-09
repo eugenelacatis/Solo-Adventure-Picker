@@ -1,0 +1,63 @@
+.hud-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding: 0.75rem 1.5rem;
+  border-radius: 12px;
+  background-color: rgba(100, 108, 255, 0.08);
+  max-width: 600px;
+  margin: 0 auto 1.5rem auto;
+}
+
+.hud-nav {
+  display: flex;
+  gap: 1rem;
+}
+
+.hud-xp {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 1;
+  min-width: 180px;
+}
+
+.hud-level {
+  font-weight: bold;
+  white-space: nowrap;
+}
+
+.hud-progress-bar {
+  flex: 1;
+  height: 10px;
+  border-radius: 6px;
+  background-color: rgba(100, 108, 255, 0.2);
+  overflow: hidden;
+}
+
+.hud-progress-fill {
+  height: 100%;
+  background-color: #4CAF50;
+  transition: width 0.3s ease;
+}
+
+.hud-xp-label {
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.hud-achievements {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.hud-achievement-badge {
+  background-color: #4CAF50;
+  color: white;
+  padding: 0.25rem 0.6rem;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}

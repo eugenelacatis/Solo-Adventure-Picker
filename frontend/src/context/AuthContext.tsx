@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
-import { getUserId } from '../utils/userId.ts'
+import { API_BASE } from '../api.ts'
 
 interface AuthUser {
   userId: string
@@ -15,8 +15,6 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
-
-const API_BASE = 'http://localhost:8080'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
@@ -54,7 +52,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, anonymousUserId: getUserId() }),
+      body: JSON.stringify({ email, password }),
     })
     if (!res.ok) {
       const errorJson = await res.json()

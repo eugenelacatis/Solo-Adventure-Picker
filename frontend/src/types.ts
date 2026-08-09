@@ -15,10 +15,13 @@ export interface Adventure {
 export interface XpResponse {
   totalXp: number
   level: number
+  nextLevelXp: number
+  alreadyVisited: boolean
 }
 
 export interface VisitedEntry {
   adventureId: string
+  name?: string
   lat: number
   lng: number
 }

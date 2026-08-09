@@ -33,12 +33,29 @@ test('full user journey: demo, sign up, mark visited, journal, log out, log back
   await page.getByRole('button', { name: 'Show More' }).click()
   await expect(page.getByPlaceholder('Write about your adventure...')).toBeVisible()
 
+  // HUD starts at 0 XP for a brand-new account.
+  await expect(page.getByText('0 / 100 XP')).toBeVisible()
+
   await page.getByRole('button', { name: 'Mark as Visited' }).click()
   await expect(page.getByText('Marked as visited!')).toBeVisible()
+
+  // Marking awards the adventure's XP, and the HUD reflects it without a
+  // page reload (the response is passed straight into HUD state).
+  await expect(page.getByText('0 / 100 XP')).not.toBeVisible()
+  const xpAfterFirstVisit = await page.locator('.hud-xp-label').textContent()
+
+  // Re-marking the same adventure as visited is blocked server-side (the
+  // unique index on visited_adventures) — the button now reads "Already
+  // Visited" and is disabled, so re-clicking cannot award XP twice.
+  await expect(page.getByRole('button', { name: 'Already Visited' })).toBeDisabled()
+  await expect(page.locator('.hud-xp-label')).toHaveText(xpAfterFirstVisit ?? '')
 
   await page.getByPlaceholder('Write about your adventure...').fill('What a great smoke test hike.')
   await page.getByRole('button', { name: 'Save Journal Entry' }).click()
   await expect(page.getByText('Journal entry saved!')).toBeVisible()
+
+  // Journaling awards its own bonus XP on top of the visit XP.
+  await expect(page.locator('.hud-xp-label')).not.toHaveText(xpAfterFirstVisit ?? '')
 
   await page.goto('/map')
   await expect(page.locator('.leaflet-container')).toBeVisible()

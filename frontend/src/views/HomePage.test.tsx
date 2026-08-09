@@ -1,26 +1,33 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
+import { AuthProvider } from '../context/AuthContext.tsx'
 import HomePage from './HomePage.tsx'
 import { demoAdventures } from '../data/demoAdventures.ts'
 
 function renderPage() {
   return render(
     <MemoryRouter>
-      <HomePage />
+      <AuthProvider>
+        <HomePage />
+      </AuthProvider>
     </MemoryRouter>
   )
 }
 
-describe('HomePage demo mode', () => {
-  it('shows a demo adventure card with no backend call', () => {
-    const fetchMock = vi.fn()
-    vi.stubGlobal('fetch', fetchMock)
+beforeEach(() => {
+  vi.restoreAllMocks()
+  // HomePage renders AuthProvider, which calls /auth/me on mount; stub it
+  // logged-out by default so tests aren't coupled to auth state unless
+  // they explicitly override this mock.
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, json: async () => ({}) }))
+})
 
+describe('HomePage demo mode', () => {
+  it('shows a demo adventure card with no backend call for the demo itself', () => {
     renderPage()
 
-    expect(fetchMock).not.toHaveBeenCalled()
     const namesOnPage = demoAdventures.map(a => a.name)
     const heading = screen.getByRole('heading', { level: 2 })
     expect(namesOnPage.some(name => heading.textContent?.includes(name))).toBe(true)

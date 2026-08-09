@@ -1,13 +1,14 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { API_BASE } from '../api.ts'
+import { regions } from '../data/regions.ts'
 import { capitalizeWords } from '../utils/formatting.ts'
-import { useAuth } from '../context/AuthContext.tsx'
-import type { Adventure } from '../types.ts'
+import HudHeader from '../components/HudHeader.tsx'
+import type { Adventure, XpResponse } from '../types.ts'
 import './AdventurePage.css'
 
 function AdventurePage() {
-  const { logout } = useAuth()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [adventure, setAdventure] = useState<Adventure | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -17,6 +18,7 @@ function AdventurePage() {
   const [isSavingJournal, setIsSavingJournal] = useState(false)
   const [visitSaved, setVisitSaved] = useState(false)
   const [isSavingVisit, setIsSavingVisit] = useState(false)
+  const [xp, setXp] = useState<XpResponse | null>(null)
 
   const region = searchParams.get('region') || ''
 
@@ -33,6 +35,15 @@ function AdventurePage() {
     capitalizeWords(adventure?.type), [adventure?.type]
   )
 
+  const fetchXp = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/xp`, { credentials: 'include' })
+      if (res.ok) setXp(await res.json())
+    } catch {
+      // HUD simply shows stale/default values if this fails.
+    }
+  }
+
   const getRandomAdventure = async () => {
     if (isLoading) return
 
@@ -43,7 +54,7 @@ function AdventurePage() {
     setVisitSaved(false)
 
     try {
-      const res = await fetch(`http://localhost:8080/random?region=${region}`)
+      const res = await fetch(`${API_BASE}/random?region=${region}`, { credentials: 'include' })
 
       if (!res.ok) {
         const errorJson = await res.json()
@@ -66,7 +77,7 @@ function AdventurePage() {
 
     setIsSavingJournal(true)
     try {
-      const res = await fetch('http://localhost:8080/journal', {
+      const res = await fetch(`${API_BASE}/journal`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -78,7 +89,7 @@ function AdventurePage() {
         throw new Error(errorJson.details || errorJson.error || 'Something went wrong')
       }
 
-      await res.json()
+      setXp(await res.json())
       setJournalSaved(true)
       setErrorMsg('')
     } catch (err) {
@@ -93,16 +104,11 @@ function AdventurePage() {
 
     setIsSavingVisit(true)
     try {
-      const res = await fetch('http://localhost:8080/xp/add', {
+      const res = await fetch(`${API_BASE}/visited`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          adventureId: String(adventure.id),
-          xp: adventure.xpValue || 100,
-          lat: adventure.lat,
-          lng: adventure.lng,
-        }),
+        body: JSON.stringify({ adventureId: String(adventure.id) }),
       })
 
       if (!res.ok) {
@@ -110,7 +116,7 @@ function AdventurePage() {
         throw new Error(errorJson.details || errorJson.error || 'Something went wrong')
       }
 
-      await res.json()
+      setXp(await res.json())
       setVisitSaved(true)
       setErrorMsg('')
     } catch (err) {
@@ -121,13 +127,24 @@ function AdventurePage() {
   }
 
   useEffect(() => {
+    fetchXp()
     getRandomAdventure()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div id="app">
       <h1>Solo Adventure Picker</h1>
-      <button className="logout-btn" onClick={() => logout()}>Log Out</button>
+      <HudHeader xp={xp} />
+
+      <select
+        value={region}
+        onChange={(e) => setSearchParams(e.target.value ? { region: e.target.value } : {})}
+      >
+        <option value="">All Regions</option>
+        {regions.map(r => (
+          <option key={r.value} value={r.value}>{r.label}</option>
+        ))}
+      </select>
 
       {adventure && (
         <div className="card" key={adventure.name}>
@@ -170,9 +187,13 @@ function AdventurePage() {
                 onClick={markAsVisited}
                 disabled={isSavingVisit || visitSaved}
               >
-                {visitSaved ? 'Marked as Visited' : 'Mark as Visited'}
+                {visitSaved ? 'Already Visited' : 'Mark as Visited'}
               </button>
-              {visitSaved && <p className="visit-confirmation">Marked as visited!</p>}
+              {visitSaved && (
+                <p className="visit-confirmation">
+                  {xp?.alreadyVisited ? 'Already visited before — no new XP.' : 'Marked as visited!'}
+                </p>
+              )}
             </div>
           </div>
         </div>

@@ -4,7 +4,9 @@ import L from 'leaflet'
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
 import markerIcon from 'leaflet/dist/images/marker-icon.png'
 import markerShadow from 'leaflet/dist/images/marker-shadow.png'
-import type { VisitedEntry } from '../types.ts'
+import { API_BASE } from '../api.ts'
+import HudHeader from '../components/HudHeader.tsx'
+import type { VisitedEntry, XpResponse } from '../types.ts'
 import 'leaflet/dist/leaflet.css'
 import './MapPage.css'
 
@@ -21,17 +23,24 @@ const DEFAULT_CENTER: [number, number] = [37.5, -122.2] // Bay Area
 
 function MapPage() {
   const [visited, setVisited] = useState<VisitedEntry[]>([])
+  const [xp, setXp] = useState<XpResponse | null>(null)
 
   useEffect(() => {
-    fetch('http://localhost:8080/visited', { credentials: 'include' })
+    fetch(`${API_BASE}/visited`, { credentials: 'include' })
       .then(res => res.json())
       .then(setVisited)
       .catch(() => setVisited([]))
+
+    fetch(`${API_BASE}/xp`, { credentials: 'include' })
+      .then(res => (res.ok ? res.json() : null))
+      .then(setXp)
+      .catch(() => setXp(null))
   }, [])
 
   return (
     <div className="map-page">
       <h1>Your Explored World</h1>
+      <HudHeader xp={xp} />
       <MapContainer
         center={DEFAULT_CENTER}
         zoom={9}
@@ -57,7 +66,7 @@ function MapPage() {
             icon={defaultIcon}
             data-testid="visited-marker"
           >
-            <Popup>Visited: {v.adventureId}</Popup>
+            <Popup>Visited: {v.name || v.adventureId}</Popup>
           </Marker>
         ))}
       </MapContainer>
