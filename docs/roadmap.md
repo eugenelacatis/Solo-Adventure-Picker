@@ -50,10 +50,14 @@ This roadmap outlines the development phases for turning the app into a gamified
 
 ---
 
-##  Phase 4 – Persistent User System
-- [ ] Add proper user auth (Supabase or custom JWT) — replaces the localStorage
-      client ID from Phase 1
+##  Phase 4 – Persistent User System (COMPLETE, 2026-08-08)
+- [x] Add proper user auth (session cookies + bcrypt) — replaces trusting the
+      client-supplied userId from Phase 1; closes the access-control gap
+      flagged in the Phase 1-3 security review
 - [x] Store visited adventures and XP (done in Phase 1/2, via SQLite instead of MongoDB)
+- [x] Anonymous visitors get a recorded demo (fixed real-adventure set,
+      unlimited reroll); real reroll, mark-as-visited, journal, map, and
+      achievements all require an account
 - [ ] Load journal entries from DB for display (currently write-only from the UI)
 - [ ] Let users view past adventures
 - [ ] Add settings page for account and preferences
