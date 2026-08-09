@@ -38,6 +38,15 @@ func main() {
 		{Name: "Edgewood Park and Natural Preserve", Type: "hike", Region: "bay-area", Lat: 37.4602, Lng: -122.2731},
 		{Name: "Monte Bello Open Space Preserve", Type: "hike", Region: "bay-area", Lat: 37.3208, Lng: -122.1611},
 		{Name: "Big Basin Redwoods", Type: "hike", Region: "bay-area", Lat: 37.1719, Lng: -122.2245},
+		{Name: "Skyline Wilderness Park", Type: "hike", Region: "north-bay", Lat: 38.2694, Lng: -122.2653},
+		{Name: "Point Reyes National Seashore", Type: "hike", Region: "north-bay", Lat: 38.0700, Lng: -122.9600},
+		{Name: "Annadel State Park", Type: "hike", Region: "north-bay", Lat: 38.4419, Lng: -122.6142},
+		{Name: "Almaden Quicksilver County Park", Type: "hike", Region: "south-bay", Lat: 37.1897, Lng: -121.8244},
+		{Name: "Rancho San Antonio Preserve", Type: "hike", Region: "south-bay", Lat: 37.3327, Lng: -122.0866},
+		{Name: "Uvas Canyon County Park", Type: "hike", Region: "south-bay", Lat: 37.0850, Lng: -121.7736},
+		{Name: "Redwood Regional Park", Type: "hike", Region: "east-bay", Lat: 37.8158, Lng: -122.1622},
+		{Name: "Mission Peak Regional Preserve", Type: "hike", Region: "east-bay", Lat: 37.5091, Lng: -121.8807},
+		{Name: "Diablo Foothills Regional Park", Type: "hike", Region: "east-bay", Lat: 37.8564, Lng: -121.9350},
 	}
 
 	stmt, err := db.Prepare(`INSERT INTO adventures (name, type, region, lat, lng) VALUES (?, ?, ?, ?, ?)`)
