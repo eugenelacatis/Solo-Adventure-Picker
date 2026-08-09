@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/EugeneL97/solo-adventure-picker/config"
-	"github.com/EugeneL97/solo-adventure-picker/routes"
+	"github.com/eugenelacatis/solo-adventure-picker/config"
+	"github.com/eugenelacatis/solo-adventure-picker/routes"
 )
 
 func main() {

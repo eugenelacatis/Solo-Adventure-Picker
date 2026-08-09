@@ -7,9 +7,9 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/EugeneL97/solo-adventure-picker/models"
-	"github.com/EugeneL97/solo-adventure-picker/services"
-	"github.com/EugeneL97/solo-adventure-picker/utils"
+	"github.com/eugenelacatis/solo-adventure-picker/models"
+	"github.com/eugenelacatis/solo-adventure-picker/services"
+	"github.com/eugenelacatis/solo-adventure-picker/utils"
 )
 
 // withCORS wraps a handler so every route (including preflight OPTIONS

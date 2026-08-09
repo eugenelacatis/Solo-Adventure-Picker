@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/EugeneL97/solo-adventure-picker/config"
-	"github.com/EugeneL97/solo-adventure-picker/models"
+	"github.com/eugenelacatis/solo-adventure-picker/config"
+	"github.com/eugenelacatis/solo-adventure-picker/models"
 )
 
 func newTestDB(t *testing.T) *sql.DB {

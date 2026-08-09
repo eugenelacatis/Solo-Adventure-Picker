@@ -1,4 +1,4 @@
-module github.com/EugeneL97/solo-adventure-picker
+module github.com/eugenelacatis/solo-adventure-picker
 
 go 1.25.0
 
