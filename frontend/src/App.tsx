@@ -1,18 +1,26 @@
 import { Routes, Route } from 'react-router-dom'
+import { AuthProvider } from './context/AuthContext'
+import RequireAuth from './context/RequireAuth'
 import HomePage from './views/HomePage'
 import AdventurePage from './views/AdventurePage'
 import MapPage from './views/MapPage'
+import LoginPage from './views/LoginPage'
+import SignupPage from './views/SignupPage'
 import './App.css'
 
 function App() {
   return (
-    <div id="app">
-      <Routes>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/adventure" element={<AdventurePage />} />
-        <Route path="/map" element={<MapPage />} />
-      </Routes>
-    </div>
+    <AuthProvider>
+      <div id="app">
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/signup" element={<SignupPage />} />
+          <Route path="/adventure" element={<RequireAuth><AdventurePage /></RequireAuth>} />
+          <Route path="/map" element={<RequireAuth><MapPage /></RequireAuth>} />
+        </Routes>
+      </div>
+    </AuthProvider>
   )
 }
 

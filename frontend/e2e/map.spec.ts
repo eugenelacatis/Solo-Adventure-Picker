@@ -1,7 +1,16 @@
 import { test, expect } from '@playwright/test'
 
 test.beforeEach(async ({ page }) => {
-  await page.route('http://localhost:8080/visited/*', route =>
+  // /map is login-gated; mock /auth/me so RequireAuth treats us as signed in
+  // without needing a real signup/login round trip for this test.
+  await page.route('http://localhost:8080/auth/me', route =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ userId: 'test-user', email: 'test@example.com' }),
+    })
+  )
+  await page.route('http://localhost:8080/visited', route =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -28,8 +37,8 @@ test('renders a real Leaflet map with a marker per visited adventure', async ({ 
 })
 
 test('renders the map with zero markers when nothing has been visited', async ({ page }) => {
-  await page.unroute('http://localhost:8080/visited/*')
-  await page.route('http://localhost:8080/visited/*', route =>
+  await page.unroute('http://localhost:8080/visited')
+  await page.route('http://localhost:8080/visited', route =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
   )
 

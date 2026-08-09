@@ -2,12 +2,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
+import { AuthProvider } from '../context/AuthContext.tsx'
 import AdventurePage from './AdventurePage.tsx'
 
 function renderPage() {
   return render(
     <MemoryRouter initialEntries={['/adventure?region=bay-area']}>
-      <AdventurePage />
+      <AuthProvider>
+        <AdventurePage />
+      </AuthProvider>
     </MemoryRouter>
   )
 }
@@ -45,15 +48,15 @@ describe('AdventurePage', () => {
   })
 
   it('submits a journal entry and shows a confirmation', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ id: 1, name: 'Mount Tamalpais', region: 'bay-area', xpValue: 150 }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ totalXp: 25, level: 1 }),
-      })
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/auth/me')) {
+        return Promise.resolve({ ok: true, json: async () => ({ userId: 'abc', email: 'hiker@example.com' }) })
+      }
+      if (String(url).includes('/random')) {
+        return Promise.resolve({ ok: true, json: async () => ({ id: 1, name: 'Mount Tamalpais', region: 'bay-area', xpValue: 150 }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ totalXp: 25, level: 1 }) })
+    })
     vi.stubGlobal('fetch', fetchMock)
 
     const user = userEvent.setup()
@@ -71,22 +74,22 @@ describe('AdventurePage', () => {
       expect(screen.getByText(/journal entry saved/i)).toBeInTheDocument()
     })
 
-    const journalCall = fetchMock.mock.calls.find(call => String(call[0]).includes('/journal/'))
+    const journalCall = fetchMock.mock.calls.find(call => String(call[0]).includes('/journal'))
     expect(journalCall).toBeTruthy()
     const requestBody = JSON.parse(journalCall![1].body)
     expect(requestBody.text).toBe('Great hike today!')
   })
 
   it('marks an adventure as visited and shows a confirmation', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ id: 1, name: 'Mount Tamalpais', region: 'bay-area', xpValue: 150, lat: 37.9235, lng: -122.5965 }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ totalXp: 150, level: 2 }),
-      })
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/auth/me')) {
+        return Promise.resolve({ ok: true, json: async () => ({ userId: 'abc', email: 'hiker@example.com' }) })
+      }
+      if (String(url).includes('/random')) {
+        return Promise.resolve({ ok: true, json: async () => ({ id: 1, name: 'Mount Tamalpais', region: 'bay-area', xpValue: 150, lat: 37.9235, lng: -122.5965 }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ totalXp: 150, level: 2 }) })
+    })
     vi.stubGlobal('fetch', fetchMock)
 
     const user = userEvent.setup()

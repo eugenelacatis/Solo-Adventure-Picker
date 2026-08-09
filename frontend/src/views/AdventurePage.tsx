@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { capitalizeWords } from '../utils/formatting.ts'
-import { getUserId } from '../utils/userId.ts'
+import { useAuth } from '../context/AuthContext.tsx'
 import type { Adventure } from '../types.ts'
 import './AdventurePage.css'
 
 function AdventurePage() {
+  const { logout } = useAuth()
   const [searchParams] = useSearchParams()
   const [adventure, setAdventure] = useState<Adventure | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
@@ -65,8 +66,9 @@ function AdventurePage() {
 
     setIsSavingJournal(true)
     try {
-      const res = await fetch(`http://localhost:8080/journal/${getUserId()}`, {
+      const res = await fetch('http://localhost:8080/journal', {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ adventureId: String(adventure.id), text: journalText }),
       })
@@ -91,8 +93,9 @@ function AdventurePage() {
 
     setIsSavingVisit(true)
     try {
-      const res = await fetch(`http://localhost:8080/xp/${getUserId()}/add`, {
+      const res = await fetch('http://localhost:8080/xp/add', {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           adventureId: String(adventure.id),
@@ -124,6 +127,7 @@ function AdventurePage() {
   return (
     <div id="app">
       <h1>Solo Adventure Picker</h1>
+      <button className="logout-btn" onClick={() => logout()}>Log Out</button>
 
       {adventure && (
         <div className="card" key={adventure.name}>
