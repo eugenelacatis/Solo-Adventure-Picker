@@ -19,12 +19,15 @@ This roadmap outlines the development phases for turning the app into a gamified
 - [x] Migrate storage from MongoDB to SQLite (no infra dependency, see backend README)
 - [x] Add real lat/lng coordinates to adventures
 - [x] Create and store user ID in localStorage (pre-auth)
-- [x] Implement XP counter per user, persisted via `/xp/{userId}` and `/xp/{userId}/add`
+- [x] Implement XP counter per user, persisted via `/xp` and (as of Milestone 4.5) `/visited`
 - [x] Derive user level from total XP (`services.LevelForXp`)
 - [x] Create journal input box + submit to `/journal/{userId}` (awards bonus XP)
 - [x] Migrate frontend from JS to TypeScript
 - [ ] Add adventure filters (type, mood, etc.)
 - [ ] Style page for mobile responsiveness
+
+Note: XP counter and journal submission were API-complete here, but the
+frontend never rendered XP/level anywhere until Milestone 4.5 added the HUD.
 
 ---
 
@@ -42,11 +45,16 @@ This roadmap outlines the development phases for turning the app into a gamified
 ##  Phase 3 – Achievements (COMPLETE, 2026-08-07)
 - [x] Compute milestones on demand from visited-adventure/journal counts
       (`services.ComputeAchievements`) — no background job, no extra persistence
-- [x] `GET /achievements/{userId}` endpoint
+- [x] `GET /achievements` endpoint
 - [ ] Add reroll limit (reset daily)
 - [ ] Reward reroll tokens from achievements or journaling
 - [ ] Daily quest system (e.g., "Do 1 new thing")
 - [ ] Style gear badges or perks (no functionality yet)
+
+Note: achievements were computable here but had no UI until Milestone 4.5's
+HUD. The remaining unchecked items (reroll limits, tokens, quests) needed
+the trust fixes in Milestone 4.5 first — an economy can't be built on
+client-asserted XP or undeduped visits.
 
 ---
 
@@ -61,6 +69,41 @@ This roadmap outlines the development phases for turning the app into a gamified
 - [ ] Load journal entries from DB for display (currently write-only from the UI)
 - [ ] Let users view past adventures
 - [ ] Add settings page for account and preferences
+
+---
+
+##  Milestone 4.5 – Trustworthy Economy + Visible RPG (COMPLETE, 2026-08-09)
+Phases 1 and 3 were API-complete but invisible: the frontend never called
+`/xp` or `/achievements`, and the economy had no real foundation to build
+reroll limits or tokens on top of. This milestone fixed both.
+
+- [x] Versioned SQLite migrations (`PRAGMA user_version`) — `CREATE TABLE IF
+      NOT EXISTS` alone can't alter existing databases, so schema changes
+      from here on go through a migration step
+- [x] `created_at` timestamps on `visited_adventures` and `journal_entries`
+- [x] Unique index on `visited_adventures(user_id, adventure_id)`, with a
+      migration step deduping any pre-existing double-counted visits
+- [x] `POST /visited` replaces `/xp/add`: server looks up XP amount and
+      coordinates from the adventure row instead of trusting the client;
+      repeat visits are a no-op (`alreadyVisited` in the response) instead
+      of awarding XP again
+- [x] Removed the per-reroll Gemini call on `/random` — it was
+      unauthenticated, synchronous, and personalized off a hardcoded
+      profile that never varied; adventures now carry real seeded
+      descriptions instead
+- [x] `/random` requires a session (matches the "real reroll requires an
+      account" rule Phase 4 already established for other actions)
+- [x] Fixed a signup account-takeover bug: signup used to accept a
+      client-supplied `anonymousUserId` and upsert onto it, so a second
+      signup in the same browser could silently overwrite the first
+      account's email/password. User IDs are now minted server-side.
+- [x] Reworked the leveling curve from a hardcoded two-threshold list
+      (capped at level 3) to a formula (`services.NextLevelXp`) that keeps
+      scaling
+- [x] XP/level/achievements HUD (`HudHeader`) on the Adventure and Map
+      pages — the first UI surface for data the backend has had since
+      Phase 1
+- [x] Region picker on the real Adventure page (previously demo-only)
 
 ---
 
