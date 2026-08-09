@@ -17,9 +17,17 @@ import (
 // body) gets the same CORS headers. Registering headers per-handler and
 // missing OPTIONS handling on POST routes causes browser preflight requests
 // to fail even though a direct (non-browser) request would succeed.
+//
+// Session cookies require credentialed requests, and browsers reject
+// "Access-Control-Allow-Origin: *" on credentialed requests outright — the
+// origin must be echoed back explicitly, paired with
+// Access-Control-Allow-Credentials: true.
 func withCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		if origin := r.Header.Get("Origin"); origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		}
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
 		w.Header().Set("Content-Type", "application/json")
@@ -76,8 +84,7 @@ func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 		json.NewEncoder(w).Encode(adv)
 	}))
 
-	mux.HandleFunc("/xp/{userId}", withCORS(func(w http.ResponseWriter, r *http.Request) {
-		userId := r.PathValue("userId")
+	mux.HandleFunc("/xp", withCORS(requireAuth(db, func(w http.ResponseWriter, r *http.Request, userId string) {
 		totalXp, err := getTotalXp(db, userId)
 		if err != nil {
 			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
@@ -91,11 +98,9 @@ func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 			"totalXp": totalXp,
 			"level":   services.LevelForXp(totalXp),
 		})
-	}))
+	})))
 
-	mux.HandleFunc("/xp/{userId}/add", withCORS(func(w http.ResponseWriter, r *http.Request) {
-		userId := r.PathValue("userId")
-
+	mux.HandleFunc("/xp/add", withCORS(requireAuth(db, func(w http.ResponseWriter, r *http.Request, userId string) {
 		var body struct {
 			AdventureId string  `json:"adventureId"`
 			Xp          int     `json:"xp"`
@@ -145,11 +150,9 @@ func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 			"totalXp": totalXp,
 			"level":   services.LevelForXp(totalXp),
 		})
-	}))
+	})))
 
-	mux.HandleFunc("/journal/{userId}", withCORS(func(w http.ResponseWriter, r *http.Request) {
-		userId := r.PathValue("userId")
-
+	mux.HandleFunc("/journal", withCORS(requireAuth(db, func(w http.ResponseWriter, r *http.Request, userId string) {
 		var body struct {
 			AdventureId string `json:"adventureId"`
 			Text        string `json:"text"`
@@ -196,11 +199,9 @@ func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 			"totalXp": totalXp,
 			"level":   services.LevelForXp(totalXp),
 		})
-	}))
+	})))
 
-	mux.HandleFunc("/visited/{userId}", withCORS(func(w http.ResponseWriter, r *http.Request) {
-		userId := r.PathValue("userId")
-
+	mux.HandleFunc("/visited", withCORS(requireAuth(db, func(w http.ResponseWriter, r *http.Request, userId string) {
 		rows, err := db.Query(`SELECT adventure_id, lat, lng FROM visited_adventures WHERE user_id = ?`, userId)
 		if err != nil {
 			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
@@ -225,11 +226,9 @@ func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 		}
 
 		json.NewEncoder(w).Encode(visited)
-	}))
+	})))
 
-	mux.HandleFunc("/achievements/{userId}", withCORS(func(w http.ResponseWriter, r *http.Request) {
-		userId := r.PathValue("userId")
-
+	mux.HandleFunc("/achievements", withCORS(requireAuth(db, func(w http.ResponseWriter, r *http.Request, userId string) {
 		var visitedCount, journalCount int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM visited_adventures WHERE user_id = ?`, userId).Scan(&visitedCount); err != nil {
 			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
@@ -247,7 +246,9 @@ func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 		}
 
 		json.NewEncoder(w).Encode(services.ComputeAchievements(visitedCount, journalCount))
-	}))
+	})))
+
+	registerAuthRoutes(mux, db)
 }
 
 const journalBonusXp = 25

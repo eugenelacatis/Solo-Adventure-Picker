@@ -23,9 +23,17 @@ CREATE TABLE IF NOT EXISTS adventures (
 );
 
 CREATE TABLE IF NOT EXISTS users (
-	id       INTEGER PRIMARY KEY AUTOINCREMENT,
-	user_id  TEXT NOT NULL UNIQUE,
-	total_xp INTEGER NOT NULL DEFAULT 0
+	id            INTEGER PRIMARY KEY AUTOINCREMENT,
+	user_id       TEXT NOT NULL UNIQUE,
+	total_xp      INTEGER NOT NULL DEFAULT 0,
+	email         TEXT UNIQUE,
+	password_hash TEXT
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+	token      TEXT PRIMARY KEY,
+	user_id    TEXT NOT NULL,
+	expires_at DATETIME NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS journal_entries (

@@ -30,6 +30,65 @@ func insertTestAdventure(t *testing.T, db *sql.DB, adv models.Adventure) {
 	}
 }
 
+// signUpTestUser signs up userId as a real account (email derived from
+// userId) and returns its session cookie, so gated-route tests can act as
+// that user across multiple requests without re-signing-up.
+func signUpTestUser(t *testing.T, mux *http.ServeMux, userId string) *http.Cookie {
+	t.Helper()
+	signupBody, _ := json.Marshal(map[string]string{
+		"email":           userId + "@example.com",
+		"password":        "hunter2",
+		"anonymousUserId": userId,
+	})
+	signupReq := httptest.NewRequest(http.MethodPost, "/auth/signup", bytes.NewReader(signupBody))
+	signupRec := httptest.NewRecorder()
+	mux.ServeHTTP(signupRec, signupReq)
+	if signupRec.Code != http.StatusOK {
+		t.Fatalf("signUpTestUser: signup for %q failed with status %d: %s", userId, signupRec.Code, signupRec.Body.String())
+	}
+
+	for _, c := range signupRec.Result().Cookies() {
+		if c.Name == "session" {
+			return c
+		}
+	}
+	t.Fatalf("signUpTestUser: no session cookie returned for %q", userId)
+	return nil
+}
+
+// authedRequest builds a request carrying the given session cookie.
+func authedRequest(method, path string, body []byte, cookie *http.Cookie) *http.Request {
+	var reader *bytes.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	} else {
+		reader = bytes.NewReader(nil)
+	}
+	req := httptest.NewRequest(method, path, reader)
+	req.AddCookie(cookie)
+	return req
+}
+
+func TestWithCORS_CredentialedRequest_EchoesOriginNotWildcard(t *testing.T) {
+	db := newTestDB(t)
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+
+	req := httptest.NewRequest(http.MethodOptions, "/auth/signup", nil)
+	req.Header.Set("Origin", "http://localhost:5173")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	gotOrigin := rec.Header().Get("Access-Control-Allow-Origin")
+	if gotOrigin != "http://localhost:5173" {
+		t.Errorf("Access-Control-Allow-Origin = %q, want the echoed request origin (a wildcard is rejected by browsers on credentialed requests)", gotOrigin)
+	}
+	if rec.Header().Get("Access-Control-Allow-Credentials") != "true" {
+		t.Errorf("Access-Control-Allow-Credentials = %q, want %q", rec.Header().Get("Access-Control-Allow-Credentials"), "true")
+	}
+}
+
 func TestRandomHandler_ReturnsMatchingRegion(t *testing.T) {
 	db := newTestDB(t)
 	insertTestAdventure(t, db, models.Adventure{Name: "Mount Tam", Type: "hike", Region: "bay-area", Lat: 37.9, Lng: -122.5})
@@ -74,12 +133,27 @@ func TestRandomHandler_NoMatchingRegion_Returns404(t *testing.T) {
 	}
 }
 
+func TestGetXPHandler_NoSession_Returns401(t *testing.T) {
+	db := newTestDB(t)
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+
+	req := httptest.NewRequest(http.MethodGet, "/xp", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+}
+
 func TestGetXPHandler_NewUser_ReturnsZero(t *testing.T) {
 	db := newTestDB(t)
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, db)
 
-	req := httptest.NewRequest(http.MethodGet, "/xp/new-user-1", nil)
+	cookie := signUpTestUser(t, mux, "new-user-1")
+	req := authedRequest(http.MethodGet, "/xp", nil, cookie)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -114,7 +188,8 @@ func TestAwardXPHandler_AccumulatesAndPersists(t *testing.T) {
 		"lng":         -122.5965,
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/xp/user-1/add", bytes.NewReader(awardBody))
+	cookie := signUpTestUser(t, mux, "user-1")
+	req := authedRequest(http.MethodPost, "/xp/add", awardBody, cookie)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -123,7 +198,7 @@ func TestAwardXPHandler_AccumulatesAndPersists(t *testing.T) {
 	}
 
 	// Verify it persisted by fetching again.
-	getReq := httptest.NewRequest(http.MethodGet, "/xp/user-1", nil)
+	getReq := authedRequest(http.MethodGet, "/xp", nil, cookie)
 	getRec := httptest.NewRecorder()
 	mux.ServeHTTP(getRec, getReq)
 
@@ -148,7 +223,8 @@ func TestJournalHandler_SubmitsEntryAndAwardsBonusXP(t *testing.T) {
 		"text":        "Great hike today!",
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/journal/user-1", bytes.NewReader(journalBody))
+	cookie := signUpTestUser(t, mux, "user-1")
+	req := authedRequest(http.MethodPost, "/journal", journalBody, cookie)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -156,7 +232,7 @@ func TestJournalHandler_SubmitsEntryAndAwardsBonusXP(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	getReq := httptest.NewRequest(http.MethodGet, "/xp/user-1", nil)
+	getReq := authedRequest(http.MethodGet, "/xp", nil, cookie)
 	getRec := httptest.NewRecorder()
 	mux.ServeHTTP(getRec, getReq)
 
@@ -174,13 +250,15 @@ func TestAchievementsHandler_ReflectsVisitedAndJournalCounts(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, db)
 
+	cookie := signUpTestUser(t, mux, "user-1")
+
 	_, err := db.Exec(`INSERT INTO visited_adventures (user_id, adventure_id, lat, lng) VALUES (?, ?, ?, ?)`,
 		"user-1", "adv-1", 37.9, -122.5)
 	if err != nil {
 		t.Fatalf("failed to seed visited adventure: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/achievements/user-1", nil)
+	req := authedRequest(http.MethodGet, "/achievements", nil, cookie)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -210,14 +288,15 @@ func TestGetVisitedHandler_ReturnsRecordedVisits(t *testing.T) {
 		"lat":         37.9235,
 		"lng":         -122.5965,
 	})
-	req := httptest.NewRequest(http.MethodPost, "/xp/user-1/add", bytes.NewReader(awardBody))
+	cookie := signUpTestUser(t, mux, "user-1")
+	req := authedRequest(http.MethodPost, "/xp/add", awardBody, cookie)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("setup: award XP failed with status %d: %s", rec.Code, rec.Body.String())
 	}
 
-	getReq := httptest.NewRequest(http.MethodGet, "/visited/user-1", nil)
+	getReq := authedRequest(http.MethodGet, "/visited", nil, cookie)
 	getRec := httptest.NewRecorder()
 	mux.ServeHTTP(getRec, getReq)
 
@@ -242,7 +321,8 @@ func TestGetVisitedHandler_NoVisits_ReturnsEmptyArray(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, db)
 
-	req := httptest.NewRequest(http.MethodGet, "/visited/never-visited-user", nil)
+	cookie := signUpTestUser(t, mux, "never-visited-user")
+	req := authedRequest(http.MethodGet, "/visited", nil, cookie)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -264,7 +344,8 @@ func TestJournalHandler_EmptyText_Returns400(t *testing.T) {
 		"text":        "",
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/journal/user-1", bytes.NewReader(journalBody))
+	cookie := signUpTestUser(t, mux, "user-1")
+	req := authedRequest(http.MethodPost, "/journal", journalBody, cookie)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
