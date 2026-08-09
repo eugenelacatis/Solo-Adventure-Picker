@@ -1,6 +1,7 @@
 package services
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 )
@@ -49,5 +50,22 @@ func TestComputeAchievements(t *testing.T) {
 				t.Errorf("ComputeAchievements(%d, %d) ids = %v, want %v", c.visitedCount, c.journalCount, gotIds, c.wantAchieveIds)
 			}
 		})
+	}
+}
+
+// TestComputeAchievements_NoActivity_EncodesAsEmptyArrayNotNull guards
+// against a real bug: a nil Go slice JSON-encodes as `null`, and the
+// frontend HUD calls .length on the decoded /achievements response
+// expecting an array. A brand-new user (no visits, no journal entries) hit
+// exactly this path and crashed the whole page on signup.
+func TestComputeAchievements_NoActivity_EncodesAsEmptyArrayNotNull(t *testing.T) {
+	got := ComputeAchievements(0, 0)
+
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("failed to marshal achievements: %v", err)
+	}
+	if string(encoded) != "[]" {
+		t.Errorf("json.Marshal(ComputeAchievements(0, 0)) = %s, want [] (not null)", encoded)
 	}
 }

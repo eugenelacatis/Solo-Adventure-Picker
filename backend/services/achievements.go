@@ -8,7 +8,7 @@ type Achievement struct {
 // ComputeAchievements derives which milestones a user has unlocked from their
 // visited-adventure and journal-entry counts. Computed on demand; not persisted.
 func ComputeAchievements(visitedCount, journalCount int) []Achievement {
-	var achievements []Achievement
+	achievements := []Achievement{}
 
 	if visitedCount >= 1 {
 		achievements = append(achievements, Achievement{Id: "first-adventure", Name: "First Adventure"})
