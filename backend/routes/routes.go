@@ -1,10 +1,8 @@
 package routes
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
-	"log"
 	"net/http"
 
 	"github.com/eugenelacatis/solo-adventure-picker/models"
@@ -42,7 +40,7 @@ func withCORS(next http.HandlerFunc) http.HandlerFunc {
 
 func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 
-	mux.HandleFunc("/random", withCORS(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/random", withCORS(requireAuth(db, func(w http.ResponseWriter, r *http.Request, userId string) {
 		region := r.URL.Query().Get("region")
 
 		query := `SELECT id, name, type, region, scenery, effort, duration, description, xp_value, lat, lng FROM adventures`
@@ -78,11 +76,8 @@ func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 		adv.Lat = lat.Float64
 		adv.Lng = lng.Float64
 
-		// AI Enhancement: Create a basic user profile and enhance the adventure
-		enhanceWithAI(&adv)
-
 		json.NewEncoder(w).Encode(adv)
-	}))
+	})))
 
 	mux.HandleFunc("/xp", withCORS(requireAuth(db, func(w http.ResponseWriter, r *http.Request, userId string) {
 		totalXp, err := getTotalXp(db, userId)
@@ -94,62 +89,16 @@ func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 			return
 		}
 
-		json.NewEncoder(w).Encode(map[string]int{
-			"totalXp": totalXp,
-			"level":   services.LevelForXp(totalXp),
-		})
+		writeXpResponse(w, totalXp, false)
 	})))
 
-	mux.HandleFunc("/xp/add", withCORS(requireAuth(db, func(w http.ResponseWriter, r *http.Request, userId string) {
-		var body struct {
-			AdventureId string  `json:"adventureId"`
-			Xp          int     `json:"xp"`
-			Lat         float64 `json:"lat"`
-			Lng         float64 `json:"lng"`
+	mux.HandleFunc("/visited", withCORS(requireAuth(db, func(w http.ResponseWriter, r *http.Request, userId string) {
+		switch r.Method {
+		case http.MethodPost:
+			postVisited(w, r, db, userId)
+		default:
+			getVisited(w, r, db, userId)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			utils.WriteJSONError(w, http.StatusBadRequest, utils.APIError{
-				Error: "Invalid request body.",
-				Code:  1004,
-			})
-			return
-		}
-
-		if err := addXp(db, userId, body.Xp); err != nil {
-			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
-				Error: "Failed to award XP.",
-				Code:  1005,
-			})
-			return
-		}
-
-		if body.AdventureId != "" {
-			_, err := db.Exec(
-				`INSERT INTO visited_adventures (user_id, adventure_id, lat, lng) VALUES (?, ?, ?, ?)`,
-				userId, body.AdventureId, body.Lat, body.Lng,
-			)
-			if err != nil {
-				utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
-					Error: "Failed to record visited adventure.",
-					Code:  1006,
-				})
-				return
-			}
-		}
-
-		totalXp, err := getTotalXp(db, userId)
-		if err != nil {
-			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
-				Error: "Failed to fetch updated XP.",
-				Code:  1003,
-			})
-			return
-		}
-
-		json.NewEncoder(w).Encode(map[string]int{
-			"totalXp": totalXp,
-			"level":   services.LevelForXp(totalXp),
-		})
 	})))
 
 	mux.HandleFunc("/journal", withCORS(requireAuth(db, func(w http.ResponseWriter, r *http.Request, userId string) {
@@ -167,7 +116,7 @@ func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 		}
 
 		_, err := db.Exec(
-			`INSERT INTO journal_entries (user_id, adventure_id, text) VALUES (?, ?, ?)`,
+			`INSERT INTO journal_entries (user_id, adventure_id, text, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)`,
 			userId, body.AdventureId, body.Text,
 		)
 		if err != nil {
@@ -195,37 +144,7 @@ func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 			return
 		}
 
-		json.NewEncoder(w).Encode(map[string]int{
-			"totalXp": totalXp,
-			"level":   services.LevelForXp(totalXp),
-		})
-	})))
-
-	mux.HandleFunc("/visited", withCORS(requireAuth(db, func(w http.ResponseWriter, r *http.Request, userId string) {
-		rows, err := db.Query(`SELECT adventure_id, lat, lng FROM visited_adventures WHERE user_id = ?`, userId)
-		if err != nil {
-			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
-				Error: "Failed to fetch visited adventures.",
-				Code:  1010,
-			})
-			return
-		}
-		defer rows.Close()
-
-		visited := []models.VisitedEntry{}
-		for rows.Next() {
-			var entry models.VisitedEntry
-			if err := rows.Scan(&entry.AdventureId, &entry.Lat, &entry.Lng); err != nil {
-				utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
-					Error: "Failed to fetch visited adventures.",
-					Code:  1010,
-				})
-				return
-			}
-			visited = append(visited, entry)
-		}
-
-		json.NewEncoder(w).Encode(visited)
+		writeXpResponse(w, totalXp, false)
 	})))
 
 	mux.HandleFunc("/achievements", withCORS(requireAuth(db, func(w http.ResponseWriter, r *http.Request, userId string) {
@@ -271,57 +190,129 @@ func addXp(db *sql.DB, userId string, xp int) error {
 	return err
 }
 
-// enhanceWithAI uses the adventure agent to personalize the adventure description
-func enhanceWithAI(adv *models.Adventure) {
-	ctx := context.Background()
-	agent, err := services.NewAdventureAgent(ctx)
-	if err != nil {
-		log.Printf("Failed to create adventure agent: %v", err)
-		// Set a default description if AI isn't available
-		if adv.Description == "" {
-			adv.Description = "Embark on this exciting adventure!"
-		}
-		// Set default XP value
-		if adv.XPValue == 0 {
-			adv.XPValue = 100
-		}
+// writeXpResponse encodes the standard XP/level payload every XP-awarding
+// endpoint returns, so the frontend HUD can update from any of them the
+// same way. alreadyVisited is only meaningful for POST /visited; other
+// callers pass false.
+func writeXpResponse(w http.ResponseWriter, totalXp int, alreadyVisited bool) {
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"totalXp":        totalXp,
+		"level":          services.LevelForXp(totalXp),
+		"nextLevelXp":    services.NextLevelXp(totalXp),
+		"alreadyVisited": alreadyVisited,
+	})
+}
+
+// postVisited records userId visiting an adventure and awards its XP value.
+// The client sends only the adventure ID — XP amount and coordinates are
+// looked up server-side so they can't be forged. A unique index on
+// (user_id, adventure_id) makes the insert a no-op on repeat visits, so XP
+// is only awarded once per adventure per user.
+func postVisited(w http.ResponseWriter, r *http.Request, db *sql.DB, userId string) {
+	var body struct {
+		AdventureId string `json:"adventureId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.AdventureId == "" {
+		utils.WriteJSONError(w, http.StatusBadRequest, utils.APIError{
+			Error: "adventureId is required.",
+			Code:  1004,
+		})
 		return
 	}
-	defer agent.Close()
 
-	// Create a default user profile for now (later you'll get this from user data)
-	userProfile := &services.UserProfile{
-		Preferences: []string{"outdoor activities", "exploration", "mindfulness"},
-		PastTypes:   []string{},
-		EnergyLevel: "medium",
+	var xpValue sql.NullInt64
+	var lat, lng sql.NullFloat64
+	err := db.QueryRow(`SELECT xp_value, lat, lng FROM adventures WHERE id = ?`, body.AdventureId).
+		Scan(&xpValue, &lat, &lng)
+	if err == sql.ErrNoRows {
+		utils.WriteJSONError(w, http.StatusNotFound, utils.APIError{
+			Error: "Adventure not found.",
+			Code:  1001,
+		})
+		return
 	}
-
-	// Generate a basic description if none exists
-	basicDescription := adv.Description
-	if basicDescription == "" {
-		basicDescription = "A wonderful adventure awaits you!"
-	}
-
-	// Enhance the description with AI
-	enhanced, err := agent.EnhanceDescription(adv.Name, adv.Type, basicDescription, userProfile)
 	if err != nil {
-		log.Printf("Failed to enhance adventure description: %v", err)
-		adv.Description = basicDescription
-	} else {
-		adv.Description = enhanced
+		utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
+			Error: "Failed to look up adventure.",
+			Code:  1006,
+		})
+		return
 	}
 
-	// Set XP value based on adventure type (you can make this more sophisticated later)
-	if adv.XPValue == 0 {
-		switch adv.Type {
-		case "hike", "outdoor":
-			adv.XPValue = 150
-		case "food", "cafe":
-			adv.XPValue = 75
-		case "culture", "museum":
-			adv.XPValue = 125
-		default:
-			adv.XPValue = 100
+	result, err := db.Exec(
+		`INSERT OR IGNORE INTO visited_adventures (user_id, adventure_id, lat, lng, created_at)
+		 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+		userId, body.AdventureId, lat.Float64, lng.Float64,
+	)
+	if err != nil {
+		utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
+			Error: "Failed to record visited adventure.",
+			Code:  1006,
+		})
+		return
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
+			Error: "Failed to record visited adventure.",
+			Code:  1006,
+		})
+		return
+	}
+	alreadyVisited := rowsAffected == 0
+
+	if !alreadyVisited {
+		if err := addXp(db, userId, int(xpValue.Int64)); err != nil {
+			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
+				Error: "Failed to award XP.",
+				Code:  1005,
+			})
+			return
 		}
 	}
+
+	totalXp, err := getTotalXp(db, userId)
+	if err != nil {
+		utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
+			Error: "Failed to fetch updated XP.",
+			Code:  1003,
+		})
+		return
+	}
+
+	writeXpResponse(w, totalXp, alreadyVisited)
+}
+
+func getVisited(w http.ResponseWriter, r *http.Request, db *sql.DB, userId string) {
+	rows, err := db.Query(`
+		SELECT v.adventure_id, a.name, v.lat, v.lng
+		FROM visited_adventures v
+		LEFT JOIN adventures a ON a.id = v.adventure_id
+		WHERE v.user_id = ?`, userId)
+	if err != nil {
+		utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
+			Error: "Failed to fetch visited adventures.",
+			Code:  1010,
+		})
+		return
+	}
+	defer rows.Close()
+
+	visited := []models.VisitedEntry{}
+	for rows.Next() {
+		var entry models.VisitedEntry
+		var name sql.NullString
+		if err := rows.Scan(&entry.AdventureId, &name, &entry.Lat, &entry.Lng); err != nil {
+			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
+				Error: "Failed to fetch visited adventures.",
+				Code:  1010,
+			})
+			return
+		}
+		entry.Name = name.String
+		visited = append(visited, entry)
+	}
+
+	json.NewEncoder(w).Encode(visited)
 }

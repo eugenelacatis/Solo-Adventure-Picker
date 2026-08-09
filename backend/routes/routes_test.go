@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/eugenelacatis/solo-adventure-picker/config"
@@ -30,21 +31,23 @@ func insertTestAdventure(t *testing.T, db *sql.DB, adv models.Adventure) {
 	}
 }
 
-// signUpTestUser signs up userId as a real account (email derived from
-// userId) and returns its session cookie, so gated-route tests can act as
-// that user across multiple requests without re-signing-up.
-func signUpTestUser(t *testing.T, mux *http.ServeMux, userId string) *http.Cookie {
+// signUpTestUser signs up a fresh account (email derived from the given
+// label) and returns its session cookie, so gated-route tests can act as
+// that user across multiple requests without re-signing-up. The account's
+// server-assigned userId no longer matches label — signup mints its own
+// random ID — so callers needing the actual userId should read it from the
+// signup response instead of assuming it.
+func signUpTestUser(t *testing.T, mux *http.ServeMux, label string) *http.Cookie {
 	t.Helper()
 	signupBody, _ := json.Marshal(map[string]string{
-		"email":           userId + "@example.com",
-		"password":        "hunter2",
-		"anonymousUserId": userId,
+		"email":    label + "@example.com",
+		"password": "hunter2",
 	})
 	signupReq := httptest.NewRequest(http.MethodPost, "/auth/signup", bytes.NewReader(signupBody))
 	signupRec := httptest.NewRecorder()
 	mux.ServeHTTP(signupRec, signupReq)
 	if signupRec.Code != http.StatusOK {
-		t.Fatalf("signUpTestUser: signup for %q failed with status %d: %s", userId, signupRec.Code, signupRec.Body.String())
+		t.Fatalf("signUpTestUser: signup for %q failed with status %d: %s", label, signupRec.Code, signupRec.Body.String())
 	}
 
 	for _, c := range signupRec.Result().Cookies() {
@@ -52,7 +55,7 @@ func signUpTestUser(t *testing.T, mux *http.ServeMux, userId string) *http.Cooki
 			return c
 		}
 	}
-	t.Fatalf("signUpTestUser: no session cookie returned for %q", userId)
+	t.Fatalf("signUpTestUser: no session cookie returned for %q", label)
 	return nil
 }
 
@@ -89,6 +92,22 @@ func TestWithCORS_CredentialedRequest_EchoesOriginNotWildcard(t *testing.T) {
 	}
 }
 
+func TestRandomHandler_NoSession_Returns401(t *testing.T) {
+	db := newTestDB(t)
+	insertTestAdventure(t, db, models.Adventure{Name: "Mount Tam", Type: "hike", Region: "bay-area", Lat: 37.9, Lng: -122.5})
+
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+
+	req := httptest.NewRequest(http.MethodGet, "/random?region=bay-area", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+}
+
 func TestRandomHandler_ReturnsMatchingRegion(t *testing.T) {
 	db := newTestDB(t)
 	insertTestAdventure(t, db, models.Adventure{Name: "Mount Tam", Type: "hike", Region: "bay-area", Lat: 37.9, Lng: -122.5})
@@ -97,7 +116,8 @@ func TestRandomHandler_ReturnsMatchingRegion(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, db)
 
-	req := httptest.NewRequest(http.MethodGet, "/random?region=bay-area", nil)
+	cookie := signUpTestUser(t, mux, "user-1")
+	req := authedRequest(http.MethodGet, "/random?region=bay-area", nil, cookie)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -124,7 +144,8 @@ func TestRandomHandler_NoMatchingRegion_Returns404(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, db)
 
-	req := httptest.NewRequest(http.MethodGet, "/random?region=nowhere", nil)
+	cookie := signUpTestUser(t, mux, "user-1")
+	req := authedRequest(http.MethodGet, "/random?region=nowhere", nil, cookie)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -176,20 +197,42 @@ func TestGetXPHandler_NewUser_ReturnsZero(t *testing.T) {
 	}
 }
 
-func TestAwardXPHandler_AccumulatesAndPersists(t *testing.T) {
+// insertTestAdventureWithXP inserts an adventure with an explicit xp_value,
+// returning its row ID, for tests that need POST /visited to award a known
+// amount looked up server-side (rather than trusting a client-supplied
+// amount, which is exactly what this endpoint stopped doing).
+func insertTestAdventureWithXP(t *testing.T, db *sql.DB, name string, xpValue int, lat, lng float64) int64 {
+	t.Helper()
+	res, err := db.Exec(
+		`INSERT INTO adventures (name, type, region, xp_value, lat, lng) VALUES (?, ?, ?, ?, ?, ?)`,
+		name, "hike", "bay-area", xpValue, lat, lng,
+	)
+	if err != nil {
+		t.Fatalf("failed to insert test adventure: %v", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("failed to read inserted adventure id: %v", err)
+	}
+	return id
+}
+
+func TestPostVisitedHandler_AwardsAdventuresStoredXPNotClientSuppliedXP(t *testing.T) {
 	db := newTestDB(t)
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, db)
 
-	awardBody, _ := json.Marshal(map[string]interface{}{
-		"adventureId": "adv-1",
-		"xp":          150,
-		"lat":         37.9235,
-		"lng":         -122.5965,
+	advId := insertTestAdventureWithXP(t, db, "Mount Tam", 150, 37.9235, -122.5965)
+
+	// The client only sends adventureId; any xp/lat/lng fields it might
+	// include are ignored, since the amount is looked up server-side.
+	visitBody, _ := json.Marshal(map[string]interface{}{
+		"adventureId": strconv.FormatInt(advId, 10),
+		"xp":          999999,
 	})
 
 	cookie := signUpTestUser(t, mux, "user-1")
-	req := authedRequest(http.MethodPost, "/xp/add", awardBody, cookie)
+	req := authedRequest(http.MethodPost, "/visited", visitBody, cookie)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -197,7 +240,6 @@ func TestAwardXPHandler_AccumulatesAndPersists(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	// Verify it persisted by fetching again.
 	getReq := authedRequest(http.MethodGet, "/xp", nil, cookie)
 	getRec := httptest.NewRecorder()
 	mux.ServeHTTP(getRec, getReq)
@@ -209,7 +251,71 @@ func TestAwardXPHandler_AccumulatesAndPersists(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 	if body.TotalXp != 150 {
-		t.Errorf("TotalXp = %d, want 150 after award", body.TotalXp)
+		t.Errorf("TotalXp = %d, want 150 (the adventure's stored xp_value, not the client-supplied 999999)", body.TotalXp)
+	}
+}
+
+func TestPostVisitedHandler_DuplicateVisit_DoesNotAwardXPTwice(t *testing.T) {
+	db := newTestDB(t)
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+
+	advId := insertTestAdventureWithXP(t, db, "Mount Tam", 150, 37.9235, -122.5965)
+	visitBody, _ := json.Marshal(map[string]string{"adventureId": strconv.FormatInt(advId, 10)})
+
+	cookie := signUpTestUser(t, mux, "user-1")
+
+	firstReq := authedRequest(http.MethodPost, "/visited", visitBody, cookie)
+	firstRec := httptest.NewRecorder()
+	mux.ServeHTTP(firstRec, firstReq)
+	if firstRec.Code != http.StatusOK {
+		t.Fatalf("first visit status = %d, want %d; body: %s", firstRec.Code, http.StatusOK, firstRec.Body.String())
+	}
+
+	secondReq := authedRequest(http.MethodPost, "/visited", visitBody, cookie)
+	secondRec := httptest.NewRecorder()
+	mux.ServeHTTP(secondRec, secondReq)
+	if secondRec.Code != http.StatusOK {
+		t.Fatalf("second visit status = %d, want %d; body: %s", secondRec.Code, http.StatusOK, secondRec.Body.String())
+	}
+
+	var secondBody struct {
+		TotalXp        int  `json:"totalXp"`
+		AlreadyVisited bool `json:"alreadyVisited"`
+	}
+	if err := json.Unmarshal(secondRec.Body.Bytes(), &secondBody); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if !secondBody.AlreadyVisited {
+		t.Error("alreadyVisited = false on second visit, want true")
+	}
+	if secondBody.TotalXp != 150 {
+		t.Errorf("TotalXp after duplicate visit = %d, want 150 (unchanged, not double-counted)", secondBody.TotalXp)
+	}
+
+	var visitCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM visited_adventures WHERE user_id = (SELECT user_id FROM sessions WHERE token = ?)`, cookie.Value).Scan(&visitCount); err != nil {
+		t.Fatalf("failed to count visited_adventures rows: %v", err)
+	}
+	if visitCount != 1 {
+		t.Errorf("visited_adventures rows = %d, want 1 (duplicate visit must not insert a second row)", visitCount)
+	}
+}
+
+func TestPostVisitedHandler_UnknownAdventure_Returns404(t *testing.T) {
+	db := newTestDB(t)
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+
+	visitBody, _ := json.Marshal(map[string]string{"adventureId": "99999"})
+
+	cookie := signUpTestUser(t, mux, "user-1")
+	req := authedRequest(http.MethodPost, "/visited", visitBody, cookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusNotFound, rec.Body.String())
 	}
 }
 
@@ -252,8 +358,16 @@ func TestAchievementsHandler_ReflectsVisitedAndJournalCounts(t *testing.T) {
 
 	cookie := signUpTestUser(t, mux, "user-1")
 
+	// signUpTestUser's account gets a server-generated userId, not the
+	// "user-1" label passed in, so look up the real id via the session
+	// before seeding a row against it directly.
+	var userId string
+	if err := db.QueryRow(`SELECT user_id FROM sessions WHERE token = ?`, cookie.Value).Scan(&userId); err != nil {
+		t.Fatalf("failed to resolve userId from session: %v", err)
+	}
+
 	_, err := db.Exec(`INSERT INTO visited_adventures (user_id, adventure_id, lat, lng) VALUES (?, ?, ?, ?)`,
-		"user-1", "adv-1", 37.9, -122.5)
+		userId, "adv-1", 37.9, -122.5)
 	if err != nil {
 		t.Fatalf("failed to seed visited adventure: %v", err)
 	}
@@ -282,18 +396,15 @@ func TestGetVisitedHandler_ReturnsRecordedVisits(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, db)
 
-	awardBody, _ := json.Marshal(map[string]interface{}{
-		"adventureId": "adv-1",
-		"xp":          150,
-		"lat":         37.9235,
-		"lng":         -122.5965,
-	})
+	advId := insertTestAdventureWithXP(t, db, "Mount Tam", 150, 37.9235, -122.5965)
+	visitBody, _ := json.Marshal(map[string]string{"adventureId": strconv.FormatInt(advId, 10)})
+
 	cookie := signUpTestUser(t, mux, "user-1")
-	req := authedRequest(http.MethodPost, "/xp/add", awardBody, cookie)
+	req := authedRequest(http.MethodPost, "/visited", visitBody, cookie)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("setup: award XP failed with status %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("setup: mark visited failed with status %d: %s", rec.Code, rec.Body.String())
 	}
 
 	getReq := authedRequest(http.MethodGet, "/visited", nil, cookie)
@@ -311,8 +422,9 @@ func TestGetVisitedHandler_ReturnsRecordedVisits(t *testing.T) {
 	if len(visited) != 1 {
 		t.Fatalf("visited = %+v, want 1 entry", visited)
 	}
-	if visited[0].AdventureId != "adv-1" || visited[0].Lat != 37.9235 || visited[0].Lng != -122.5965 {
-		t.Errorf("visited[0] = %+v, want adventureId=adv-1 lat=37.9235 lng=-122.5965", visited[0])
+	advIdStr := strconv.FormatInt(advId, 10)
+	if visited[0].AdventureId != advIdStr || visited[0].Name != "Mount Tam" || visited[0].Lat != 37.9235 || visited[0].Lng != -122.5965 {
+		t.Errorf("visited[0] = %+v, want adventureId=%s name=Mount Tam lat=37.9235 lng=-122.5965", visited[0], advIdStr)
 	}
 }
 

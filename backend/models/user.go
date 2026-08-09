@@ -2,6 +2,7 @@ package models
 
 type VisitedEntry struct {
 	AdventureId string  `json:"adventureId"`
+	Name        string  `json:"name,omitempty"`
 	Lat         float64 `json:"lat"`
 	Lng         float64 `json:"lng"`
 }
