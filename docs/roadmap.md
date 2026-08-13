@@ -107,7 +107,26 @@ reroll limits or tokens on top of. This milestone fixed both.
 
 ---
 
-##  Phase 5 – Mobile & Real-World Integration
+##  Phase 5 – Deployment
+- [x] Migrate backend storage from SQLite to Postgres (Neon), fixing the
+      adventure_id type mismatch (TEXT vs INTEGER) that SQLite's loose typing
+      was silently masking
+- [x] Replace PRAGMA user_version migration versioning with a real
+      schema_migrations table (Postgres has no PRAGMA equivalent)
+- [x] Make session cookies environment-aware: SameSite=None; Secure=true in
+      production (required once frontend and backend are on different
+      domains), SameSite=Lax unchanged for local dev
+- [x] Add an env-var-driven CORS origin allowlist for production (currently
+      echoes any Origin header)
+- [x] Deploy backend to Vercel (Go serverless runtime)
+- [x] Deploy frontend to Vercel, pointed at the deployed backend via
+      VITE_API_BASE
+- [x] Verify full flow (signup, reroll, mark visited, journal, achievements,
+      HUD) cross-origin in production
+
+---
+
+##  Phase 6 – Mobile & Real-World Integration
 - [ ] Convert app into mobile-friendly PWA or native wrapper
 - [ ] Use GPS to suggest nearby adventures
 - [ ] Add location-based fog reveal
