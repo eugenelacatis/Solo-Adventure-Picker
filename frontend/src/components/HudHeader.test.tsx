@@ -63,6 +63,36 @@ describe('HudHeader', () => {
     })
   })
 
+  it('renders the quest description when not yet completed today', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/quest')) {
+        return Promise.resolve({ ok: true, json: async () => ({ description: 'Do 1 new thing today', completedToday: false }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => [] })
+    }))
+
+    renderHud({ totalXp: 0, level: 1, nextLevelXp: 100, alreadyVisited: false })
+
+    await waitFor(() => {
+      expect(screen.getByText('Do 1 new thing today')).toBeInTheDocument()
+    })
+  })
+
+  it('renders the quest as complete once completedToday is true', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/quest')) {
+        return Promise.resolve({ ok: true, json: async () => ({ description: 'Do 1 new thing today', completedToday: true }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => [] })
+    }))
+
+    renderHud({ totalXp: 0, level: 1, nextLevelXp: 100, alreadyVisited: false })
+
+    await waitFor(() => {
+      expect(screen.getByText('Daily quest complete!')).toBeInTheDocument()
+    })
+  })
+
   it('updates displayed XP when the xp prop changes', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => [] }))
 

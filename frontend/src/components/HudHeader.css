@@ -4,8 +4,8 @@
   flex-wrap: wrap;
   gap: 1rem;
   padding: 0.75rem 1.5rem;
-  border-radius: 12px;
-  background-color: rgba(100, 108, 255, 0.08);
+  border-radius: var(--radius-md);
+  background-color: var(--color-brand-100);
   max-width: 600px;
   margin: 0 auto 1.5rem auto;
 }
@@ -32,19 +32,36 @@
   flex: 1;
   height: 10px;
   border-radius: 6px;
-  background-color: rgba(100, 108, 255, 0.2);
+  background-color: var(--color-surface-100);
   overflow: hidden;
 }
 
 .hud-progress-fill {
   height: 100%;
-  background-color: #4CAF50;
+  background-color: var(--color-energy-500);
   transition: width 0.3s ease;
 }
 
 .hud-xp-label {
   font-size: 0.85rem;
   white-space: nowrap;
+}
+
+.hud-quest {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--color-brand-700);
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--radius-pill);
+  background-color: var(--color-surface-0);
+  border: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.hud-quest-done {
+  color: var(--color-brand-600);
+  background-color: var(--color-brand-100);
+  border-color: transparent;
 }
 
 .hud-achievements {
@@ -54,10 +71,41 @@
 }
 
 .hud-achievement-badge {
-  background-color: #4CAF50;
-  color: white;
+  background-color: var(--color-energy-500);
+  color: var(--color-ink-900);
   padding: 0.25rem 0.6rem;
-  border-radius: 20px;
+  border-radius: var(--radius-pill);
   font-size: 0.75rem;
   font-weight: 500;
+}
+
+.hud-gear {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.hud-gear-badge {
+  display: inline-flex;
+  align-items: center;
+  background-color: var(--color-surface-100);
+  color: var(--color-ink-700);
+  border: 1px solid var(--color-border);
+  padding: 0.25rem 0.6rem;
+  border-radius: var(--radius-pill);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+@media (max-width: 640px) {
+  .hud-header {
+    padding: 0.6rem 1rem;
+    gap: 0.6rem;
+    justify-content: center;
+  }
+
+  .hud-xp {
+    min-width: 100%;
+    order: 1;
+  }
 }
