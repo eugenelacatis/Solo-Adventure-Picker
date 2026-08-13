@@ -23,8 +23,9 @@ This roadmap outlines the development phases for turning the app into a gamified
 - [x] Derive user level from total XP (`services.LevelForXp`)
 - [x] Create journal input box + submit to `/journal/{userId}` (awards bonus XP)
 - [x] Migrate frontend from JS to TypeScript
-- [ ] Add adventure filters (type, mood, etc.)
-- [ ] Style page for mobile responsiveness
+- [x] Add adventure filters (type, effort — no `mood` field exists in the
+      schema/data, so filtering covers the two real columns instead)
+- [x] Style page for mobile responsiveness
 
 Note: XP counter and journal submission were API-complete here, but the
 frontend never rendered XP/level anywhere until Milestone 4.5 added the HUD.
@@ -38,7 +39,7 @@ frontend never rendered XP/level anywhere until Milestone 4.5 added the HUD.
 - [x] Fog reveal: circle overlay around each visited coordinate (5km radius)
 - [x] Mark visited adventures as pins on the map
 - [ ] Animate fog clearing
-- [ ] Show user's current region/progress summary
+- [x] Show user's current region/progress summary
 
 ---
 
@@ -46,10 +47,17 @@ frontend never rendered XP/level anywhere until Milestone 4.5 added the HUD.
 - [x] Compute milestones on demand from visited-adventure/journal counts
       (`services.ComputeAchievements`) — no background job, no extra persistence
 - [x] `GET /achievements` endpoint
-- [ ] Add reroll limit (reset daily)
-- [ ] Reward reroll tokens from achievements or journaling
-- [ ] Daily quest system (e.g., "Do 1 new thing")
-- [ ] Style gear badges or perks (no functionality yet)
+- [x] Add reroll limit (reset daily) — 5 free rerolls/day via
+      `users.reroll_tokens`/`reroll_reset_at`, checked atomically in `/random`
+- [x] Reward reroll tokens from achievements or journaling — achievements
+      are now persisted in `user_achievements` so first-time unlocks (not
+      recomputation) grant tokens; journal entries grant a smaller bonus
+      each time
+- [x] Daily quest system ("Do 1 new thing") — completing the first new
+      visited-adventure or journal entry each day marks the quest done and
+      grants a reroll-token bonus; `GET /quest` reports status
+- [x] Style gear badges or perks (no functionality yet) — `.hud-gear-badge`
+      styling added to `HudHeader`, static placeholder, not yet earnable
 
 Note: achievements were computable here but had no UI until Milestone 4.5's
 HUD. The remaining unchecked items (reroll limits, tokens, quests) needed
@@ -66,8 +74,9 @@ client-asserted XP or undeduped visits.
 - [x] Anonymous visitors get a recorded demo (fixed real-adventure set,
       unlimited reroll); real reroll, mark-as-visited, journal, map, and
       achievements all require an account
-- [ ] Load journal entries from DB for display (currently write-only from the UI)
-- [ ] Let users view past adventures
+- [x] Load journal entries from DB for display (currently write-only from the UI)
+- [x] Let users view past adventures — combined with journal entries into a
+      new `/history` page
 - [ ] Add settings page for account and preferences
 
 ---
