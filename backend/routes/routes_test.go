@@ -12,6 +12,7 @@ import (
 
 	"github.com/eugenelacatis/solo-adventure-picker/config"
 	"github.com/eugenelacatis/solo-adventure-picker/models"
+	"github.com/eugenelacatis/solo-adventure-picker/services"
 )
 
 func newTestDB(t *testing.T) *sql.DB {
@@ -22,7 +23,7 @@ func newTestDB(t *testing.T) *sql.DB {
 	}
 	db := config.InitDB(dsn)
 	t.Cleanup(func() {
-		db.Exec(`TRUNCATE TABLE sessions, journal_entries, visited_adventures, users, adventures RESTART IDENTITY CASCADE`)
+		db.Exec(`TRUNCATE TABLE sessions, journal_entries, visited_adventures, user_achievements, users, adventures RESTART IDENTITY CASCADE`)
 		db.Close()
 	})
 	return db
@@ -31,8 +32,8 @@ func newTestDB(t *testing.T) *sql.DB {
 func insertTestAdventure(t *testing.T, db *sql.DB, adv models.Adventure) {
 	t.Helper()
 	_, err := db.Exec(
-		`INSERT INTO adventures (name, type, region, lat, lng) VALUES ($1, $2, $3, $4, $5)`,
-		adv.Name, adv.Type, adv.Region, adv.Lat, adv.Lng,
+		`INSERT INTO adventures (name, type, region, effort, lat, lng) VALUES ($1, $2, $3, $4, $5, $6)`,
+		adv.Name, adv.Type, adv.Region, adv.Effort, adv.Lat, adv.Lng,
 	)
 	if err != nil {
 		t.Fatalf("failed to insert test adventure: %v", err)
@@ -142,6 +143,140 @@ func TestRandomHandler_ReturnsMatchingRegion(t *testing.T) {
 	}
 	if adv.Name != "Mount Tam" {
 		t.Errorf("Name = %q, want %q", adv.Name, "Mount Tam")
+	}
+}
+
+func TestRandomHandler_ReturnsMatchingTypeAndEffort(t *testing.T) {
+	db := newTestDB(t)
+	insertTestAdventure(t, db, models.Adventure{Name: "Mount Tam", Type: "hike", Region: "bay-area", Effort: "hard", Lat: 37.9, Lng: -122.5})
+	insertTestAdventure(t, db, models.Adventure{Name: "Easy Stroll", Type: "hike", Region: "bay-area", Effort: "easy", Lat: 37.8, Lng: -122.4})
+
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+
+	cookie := signUpTestUser(t, mux, "user-1")
+	req := authedRequest(http.MethodGet, "/random?type=hike&effort=easy", nil, cookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var adv models.Adventure
+	if err := json.Unmarshal(rec.Body.Bytes(), &adv); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if adv.Name != "Easy Stroll" || adv.Effort != "easy" {
+		t.Errorf("adv = %+v, want Name=Easy Stroll Effort=easy", adv)
+	}
+}
+
+func TestRandomHandler_EnforcesDailyRerollLimit(t *testing.T) {
+	db := newTestDB(t)
+	insertTestAdventure(t, db, models.Adventure{Name: "Mount Tam", Type: "hike", Region: "bay-area", Lat: 37.9, Lng: -122.5})
+
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+
+	cookie := signUpTestUser(t, mux, "user-1")
+
+	// dailyRerollAllowance is 5; exhaust it.
+	for i := 0; i < 5; i++ {
+		req := authedRequest(http.MethodGet, "/random", nil, cookie)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("reroll %d: status = %d, want %d; body: %s", i+1, rec.Code, http.StatusOK, rec.Body.String())
+		}
+	}
+
+	req := authedRequest(http.MethodGet, "/random", nil, cookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusTooManyRequests, rec.Body.String())
+	}
+}
+
+func TestRandomHandler_AllowsRerollAfterResetWindowPasses(t *testing.T) {
+	db := newTestDB(t)
+	insertTestAdventure(t, db, models.Adventure{Name: "Mount Tam", Type: "hike", Region: "bay-area", Lat: 37.9, Lng: -122.5})
+
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+
+	cookie := signUpTestUser(t, mux, "user-1")
+	var userId string
+	if err := db.QueryRow(`SELECT user_id FROM sessions WHERE token = $1`, cookie.Value).Scan(&userId); err != nil {
+		t.Fatalf("failed to resolve userId from session: %v", err)
+	}
+
+	for i := 0; i < 5; i++ {
+		req := authedRequest(http.MethodGet, "/random", nil, cookie)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("reroll %d: status = %d, want %d; body: %s", i+1, rec.Code, http.StatusOK, rec.Body.String())
+		}
+	}
+
+	// Simulate the daily reset window having already passed.
+	if _, err := db.Exec(`UPDATE users SET reroll_reset_at = now() - interval '1 minute' WHERE user_id = $1`, userId); err != nil {
+		t.Fatalf("failed to backdate reroll_reset_at: %v", err)
+	}
+
+	req := authedRequest(http.MethodGet, "/random", nil, cookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func TestRerollStatusHandler_ReflectsRemainingTokens(t *testing.T) {
+	db := newTestDB(t)
+	insertTestAdventure(t, db, models.Adventure{Name: "Mount Tam", Type: "hike", Region: "bay-area", Lat: 37.9, Lng: -122.5})
+
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+
+	cookie := signUpTestUser(t, mux, "user-1")
+
+	statusReq := authedRequest(http.MethodGet, "/reroll-status", nil, cookie)
+	statusRec := httptest.NewRecorder()
+	mux.ServeHTTP(statusRec, statusReq)
+	if statusRec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", statusRec.Code, http.StatusOK, statusRec.Body.String())
+	}
+	var before struct {
+		RerollTokens int `json:"rerollTokens"`
+	}
+	if err := json.Unmarshal(statusRec.Body.Bytes(), &before); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if before.RerollTokens != 5 {
+		t.Errorf("RerollTokens = %d, want 5 before any reroll", before.RerollTokens)
+	}
+
+	rerollReq := authedRequest(http.MethodGet, "/random", nil, cookie)
+	rerollRec := httptest.NewRecorder()
+	mux.ServeHTTP(rerollRec, rerollReq)
+	if rerollRec.Code != http.StatusOK {
+		t.Fatalf("setup: reroll failed with status %d: %s", rerollRec.Code, rerollRec.Body.String())
+	}
+
+	statusReq2 := authedRequest(http.MethodGet, "/reroll-status", nil, cookie)
+	statusRec2 := httptest.NewRecorder()
+	mux.ServeHTTP(statusRec2, statusReq2)
+	var after struct {
+		RerollTokens int `json:"rerollTokens"`
+	}
+	if err := json.Unmarshal(statusRec2.Body.Bytes(), &after); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if after.RerollTokens != 4 {
+		t.Errorf("RerollTokens = %d, want 4 after one reroll", after.RerollTokens)
 	}
 }
 
@@ -357,6 +492,102 @@ func TestJournalHandler_SubmitsEntryAndAwardsBonusXP(t *testing.T) {
 	}
 }
 
+func TestJournalHandler_AwardsBonusRerollToken(t *testing.T) {
+	db := newTestDB(t)
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+
+	advId := insertTestAdventureWithXP(t, db, "Mount Tam", 150, 37.9235, -122.5965)
+	journalBody, _ := json.Marshal(map[string]string{
+		"adventureId": strconv.FormatInt(advId, 10),
+		"text":        "Great hike today!",
+	})
+
+	cookie := signUpTestUser(t, mux, "user-1")
+
+	statusReq := authedRequest(http.MethodGet, "/reroll-status", nil, cookie)
+	statusRec := httptest.NewRecorder()
+	mux.ServeHTTP(statusRec, statusReq)
+	var before struct {
+		RerollTokens int `json:"rerollTokens"`
+	}
+	json.Unmarshal(statusRec.Body.Bytes(), &before)
+
+	req := authedRequest(http.MethodPost, "/journal", journalBody, cookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	statusReq2 := authedRequest(http.MethodGet, "/reroll-status", nil, cookie)
+	statusRec2 := httptest.NewRecorder()
+	mux.ServeHTTP(statusRec2, statusReq2)
+	var after struct {
+		RerollTokens int `json:"rerollTokens"`
+	}
+	json.Unmarshal(statusRec2.Body.Bytes(), &after)
+
+	if after.RerollTokens != before.RerollTokens+journalBonusRerollTokens {
+		t.Errorf("RerollTokens = %d, want %d (before %d + bonus %d)", after.RerollTokens, before.RerollTokens+journalBonusRerollTokens, before.RerollTokens, journalBonusRerollTokens)
+	}
+}
+
+func TestGetJournalHandler_ReturnsSubmittedEntries(t *testing.T) {
+	db := newTestDB(t)
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+
+	advId := insertTestAdventureWithXP(t, db, "Mount Tam", 150, 37.9235, -122.5965)
+	journalBody, _ := json.Marshal(map[string]string{
+		"adventureId": strconv.FormatInt(advId, 10),
+		"text":        "Great hike today!",
+	})
+
+	cookie := signUpTestUser(t, mux, "user-1")
+	postReq := authedRequest(http.MethodPost, "/journal", journalBody, cookie)
+	postRec := httptest.NewRecorder()
+	mux.ServeHTTP(postRec, postReq)
+	if postRec.Code != http.StatusOK {
+		t.Fatalf("setup: journal submission failed with status %d: %s", postRec.Code, postRec.Body.String())
+	}
+
+	getReq := authedRequest(http.MethodGet, "/journal", nil, cookie)
+	getRec := httptest.NewRecorder()
+	mux.ServeHTTP(getRec, getReq)
+
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", getRec.Code, http.StatusOK, getRec.Body.String())
+	}
+
+	var entries []models.JournalEntryView
+	if err := json.Unmarshal(getRec.Body.Bytes(), &entries); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	advIdStr := strconv.FormatInt(advId, 10)
+	if len(entries) != 1 || entries[0].AdventureId != advIdStr || entries[0].AdventureName != "Mount Tam" || entries[0].Text != "Great hike today!" {
+		t.Errorf("entries = %+v, want one entry with adventureId=%s adventureName=Mount Tam text='Great hike today!'", entries, advIdStr)
+	}
+}
+
+func TestGetJournalHandler_NoEntries_ReturnsEmptyArray(t *testing.T) {
+	db := newTestDB(t)
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+
+	cookie := signUpTestUser(t, mux, "never-journaled-user")
+	req := authedRequest(http.MethodGet, "/journal", nil, cookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if rec.Body.String() != "[]\n" {
+		t.Errorf("body = %q, want empty JSON array", rec.Body.String())
+	}
+}
+
 func TestAchievementsHandler_ReflectsVisitedAndJournalCounts(t *testing.T) {
 	db := newTestDB(t)
 	mux := http.NewServeMux()
@@ -398,6 +629,241 @@ func TestAchievementsHandler_ReflectsVisitedAndJournalCounts(t *testing.T) {
 	}
 }
 
+func TestAchievementsHandler_PersistsUnlockedAchievementOnce(t *testing.T) {
+	db := newTestDB(t)
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+
+	cookie := signUpTestUser(t, mux, "user-1")
+	var userId string
+	if err := db.QueryRow(`SELECT user_id FROM sessions WHERE token = $1`, cookie.Value).Scan(&userId); err != nil {
+		t.Fatalf("failed to resolve userId from session: %v", err)
+	}
+
+	advId := insertTestAdventureWithXP(t, db, "Mount Tam", 150, 37.9, -122.5)
+	if _, err := db.Exec(`INSERT INTO visited_adventures (user_id, adventure_id, lat, lng) VALUES ($1, $2, $3, $4)`,
+		userId, advId, 37.9, -122.5); err != nil {
+		t.Fatalf("failed to seed visited adventure: %v", err)
+	}
+
+	for i := 0; i < 2; i++ {
+		req := authedRequest(http.MethodGet, "/achievements", nil, cookie)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("call %d: status = %d, want %d; body: %s", i+1, rec.Code, http.StatusOK, rec.Body.String())
+		}
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM user_achievements WHERE user_id = $1 AND achievement_id = $2`,
+		userId, "first-adventure").Scan(&count); err != nil {
+		t.Fatalf("failed to count persisted achievements: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("user_achievements rows for first-adventure = %d, want 1 (no duplicate on repeat call)", count)
+	}
+}
+
+func TestAchievementsHandler_AwardsRerollTokensOnlyForNewlyUnlocked(t *testing.T) {
+	db := newTestDB(t)
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+
+	cookie := signUpTestUser(t, mux, "user-1")
+	var userId string
+	if err := db.QueryRow(`SELECT user_id FROM sessions WHERE token = $1`, cookie.Value).Scan(&userId); err != nil {
+		t.Fatalf("failed to resolve userId from session: %v", err)
+	}
+
+	advId := insertTestAdventureWithXP(t, db, "Mount Tam", 150, 37.9, -122.5)
+	if _, err := db.Exec(`INSERT INTO visited_adventures (user_id, adventure_id, lat, lng) VALUES ($1, $2, $3, $4)`,
+		userId, advId, 37.9, -122.5); err != nil {
+		t.Fatalf("failed to seed visited adventure: %v", err)
+	}
+
+	// First call: first-adventure unlocks for the first time.
+	req := authedRequest(http.MethodGet, "/achievements", nil, cookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var afterFirst struct {
+		RerollTokens int `json:"rerollTokens"`
+	}
+	statusReq := authedRequest(http.MethodGet, "/reroll-status", nil, cookie)
+	statusRec := httptest.NewRecorder()
+	mux.ServeHTTP(statusRec, statusReq)
+	json.Unmarshal(statusRec.Body.Bytes(), &afterFirst)
+
+	if afterFirst.RerollTokens != dailyRerollAllowance+achievementRerollTokens {
+		t.Errorf("RerollTokens after first unlock = %d, want %d", afterFirst.RerollTokens, dailyRerollAllowance+achievementRerollTokens)
+	}
+
+	// Second call: same achievement, already persisted — no additional tokens.
+	req2 := authedRequest(http.MethodGet, "/achievements", nil, cookie)
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec2.Code, http.StatusOK, rec2.Body.String())
+	}
+
+	var afterSecond struct {
+		RerollTokens int `json:"rerollTokens"`
+	}
+	statusReq2 := authedRequest(http.MethodGet, "/reroll-status", nil, cookie)
+	statusRec2 := httptest.NewRecorder()
+	mux.ServeHTTP(statusRec2, statusReq2)
+	json.Unmarshal(statusRec2.Body.Bytes(), &afterSecond)
+
+	if afterSecond.RerollTokens != afterFirst.RerollTokens {
+		t.Errorf("RerollTokens after repeat call = %d, want unchanged %d", afterSecond.RerollTokens, afterFirst.RerollTokens)
+	}
+}
+
+func TestPersistNewAchievements_ReturnsOnlyNewlyUnlocked(t *testing.T) {
+	db := newTestDB(t)
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+
+	cookie := signUpTestUser(t, mux, "user-1")
+	var userId string
+	if err := db.QueryRow(`SELECT user_id FROM sessions WHERE token = $1`, cookie.Value).Scan(&userId); err != nil {
+		t.Fatalf("failed to resolve userId from session: %v", err)
+	}
+
+	first := []services.Achievement{{Id: "first-adventure", Name: "First Adventure"}}
+	newlyUnlocked, err := persistNewAchievements(db, userId, first)
+	if err != nil {
+		t.Fatalf("persistNewAchievements: %v", err)
+	}
+	if len(newlyUnlocked) != 1 || newlyUnlocked[0].Id != "first-adventure" {
+		t.Fatalf("newlyUnlocked = %+v, want one entry with id first-adventure", newlyUnlocked)
+	}
+
+	both := []services.Achievement{
+		{Id: "first-adventure", Name: "First Adventure"},
+		{Id: "five-adventures", Name: "Five Adventures"},
+	}
+	newlyUnlocked, err = persistNewAchievements(db, userId, both)
+	if err != nil {
+		t.Fatalf("persistNewAchievements: %v", err)
+	}
+	if len(newlyUnlocked) != 1 || newlyUnlocked[0].Id != "five-adventures" {
+		t.Fatalf("newlyUnlocked = %+v, want only five-adventures (first-adventure already persisted)", newlyUnlocked)
+	}
+}
+
+func TestQuestHandler_CompletesOnFirstVisitOfTheDay(t *testing.T) {
+	db := newTestDB(t)
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+
+	advId := insertTestAdventureWithXP(t, db, "Mount Tam", 150, 37.9235, -122.5965)
+	cookie := signUpTestUser(t, mux, "user-1")
+
+	questReq := authedRequest(http.MethodGet, "/quest", nil, cookie)
+	questRec := httptest.NewRecorder()
+	mux.ServeHTTP(questRec, questReq)
+	var before struct {
+		CompletedToday bool `json:"completedToday"`
+	}
+	json.Unmarshal(questRec.Body.Bytes(), &before)
+	if before.CompletedToday {
+		t.Fatalf("quest should not be completed before any activity")
+	}
+
+	statusReq := authedRequest(http.MethodGet, "/reroll-status", nil, cookie)
+	statusRec := httptest.NewRecorder()
+	mux.ServeHTTP(statusRec, statusReq)
+	var tokensBefore struct {
+		RerollTokens int `json:"rerollTokens"`
+	}
+	json.Unmarshal(statusRec.Body.Bytes(), &tokensBefore)
+
+	visitBody, _ := json.Marshal(map[string]string{"adventureId": strconv.FormatInt(advId, 10)})
+	visitReq := authedRequest(http.MethodPost, "/visited", visitBody, cookie)
+	visitRec := httptest.NewRecorder()
+	mux.ServeHTTP(visitRec, visitReq)
+	if visitRec.Code != http.StatusOK {
+		t.Fatalf("mark visited failed with status %d: %s", visitRec.Code, visitRec.Body.String())
+	}
+
+	questReq2 := authedRequest(http.MethodGet, "/quest", nil, cookie)
+	questRec2 := httptest.NewRecorder()
+	mux.ServeHTTP(questRec2, questReq2)
+	var after struct {
+		CompletedToday bool `json:"completedToday"`
+	}
+	json.Unmarshal(questRec2.Body.Bytes(), &after)
+	if !after.CompletedToday {
+		t.Errorf("quest should be completed after a new visit")
+	}
+
+	statusReq2 := authedRequest(http.MethodGet, "/reroll-status", nil, cookie)
+	statusRec2 := httptest.NewRecorder()
+	mux.ServeHTTP(statusRec2, statusReq2)
+	var tokensAfter struct {
+		RerollTokens int `json:"rerollTokens"`
+	}
+	json.Unmarshal(statusRec2.Body.Bytes(), &tokensAfter)
+	if tokensAfter.RerollTokens != tokensBefore.RerollTokens+dailyQuestRerollTokens {
+		t.Errorf("RerollTokens = %d, want %d (before %d + quest bonus %d)", tokensAfter.RerollTokens, tokensBefore.RerollTokens+dailyQuestRerollTokens, tokensBefore.RerollTokens, dailyQuestRerollTokens)
+	}
+}
+
+func TestQuestHandler_DoesNotDoubleAwardOnSecondActivityInSameDay(t *testing.T) {
+	db := newTestDB(t)
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+
+	advId := insertTestAdventureWithXP(t, db, "Mount Tam", 150, 37.9235, -122.5965)
+	cookie := signUpTestUser(t, mux, "user-1")
+
+	visitBody, _ := json.Marshal(map[string]string{"adventureId": strconv.FormatInt(advId, 10)})
+	visitReq := authedRequest(http.MethodPost, "/visited", visitBody, cookie)
+	visitRec := httptest.NewRecorder()
+	mux.ServeHTTP(visitRec, visitReq)
+	if visitRec.Code != http.StatusOK {
+		t.Fatalf("mark visited failed with status %d: %s", visitRec.Code, visitRec.Body.String())
+	}
+
+	statusReq := authedRequest(http.MethodGet, "/reroll-status", nil, cookie)
+	statusRec := httptest.NewRecorder()
+	mux.ServeHTTP(statusRec, statusReq)
+	var afterVisit struct {
+		RerollTokens int `json:"rerollTokens"`
+	}
+	json.Unmarshal(statusRec.Body.Bytes(), &afterVisit)
+
+	journalBody, _ := json.Marshal(map[string]string{
+		"adventureId": strconv.FormatInt(advId, 10),
+		"text":        "Second thing today",
+	})
+	journalReq := authedRequest(http.MethodPost, "/journal", journalBody, cookie)
+	journalRec := httptest.NewRecorder()
+	mux.ServeHTTP(journalRec, journalReq)
+	if journalRec.Code != http.StatusOK {
+		t.Fatalf("journal submission failed with status %d: %s", journalRec.Code, journalRec.Body.String())
+	}
+
+	statusReq2 := authedRequest(http.MethodGet, "/reroll-status", nil, cookie)
+	statusRec2 := httptest.NewRecorder()
+	mux.ServeHTTP(statusRec2, statusReq2)
+	var afterJournal struct {
+		RerollTokens int `json:"rerollTokens"`
+	}
+	json.Unmarshal(statusRec2.Body.Bytes(), &afterJournal)
+
+	// Journal still awards its own per-entry bonus, but the quest itself
+	// should not grant a second dailyQuestRerollTokens bonus today.
+	if afterJournal.RerollTokens != afterVisit.RerollTokens+journalBonusRerollTokens {
+		t.Errorf("RerollTokens after second activity = %d, want %d (only journal bonus, no repeat quest bonus)", afterJournal.RerollTokens, afterVisit.RerollTokens+journalBonusRerollTokens)
+	}
+}
+
 func TestGetVisitedHandler_ReturnsRecordedVisits(t *testing.T) {
 	db := newTestDB(t)
 	mux := http.NewServeMux()
@@ -430,8 +896,8 @@ func TestGetVisitedHandler_ReturnsRecordedVisits(t *testing.T) {
 		t.Fatalf("visited = %+v, want 1 entry", visited)
 	}
 	advIdStr := strconv.FormatInt(advId, 10)
-	if visited[0].AdventureId != advIdStr || visited[0].Name != "Mount Tam" || visited[0].Lat != 37.9235 || visited[0].Lng != -122.5965 {
-		t.Errorf("visited[0] = %+v, want adventureId=%s name=Mount Tam lat=37.9235 lng=-122.5965", visited[0], advIdStr)
+	if visited[0].AdventureId != advIdStr || visited[0].Name != "Mount Tam" || visited[0].Region != "bay-area" || visited[0].Lat != 37.9235 || visited[0].Lng != -122.5965 {
+		t.Errorf("visited[0] = %+v, want adventureId=%s name=Mount Tam region=bay-area lat=37.9235 lng=-122.5965", visited[0], advIdStr)
 	}
 }
 

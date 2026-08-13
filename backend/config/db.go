@@ -23,11 +23,14 @@ CREATE TABLE IF NOT EXISTS adventures (
 );
 
 CREATE TABLE IF NOT EXISTS users (
-	id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-	user_id       TEXT NOT NULL UNIQUE,
-	total_xp      INTEGER NOT NULL DEFAULT 0,
-	email         TEXT UNIQUE,
-	password_hash TEXT
+	id                       BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+	user_id                  TEXT NOT NULL UNIQUE,
+	total_xp                 INTEGER NOT NULL DEFAULT 0,
+	email                    TEXT UNIQUE,
+	password_hash            TEXT,
+	reroll_tokens            INTEGER NOT NULL DEFAULT 5,
+	reroll_reset_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+	last_quest_completed_at  DATE
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -56,6 +59,13 @@ CREATE TABLE IF NOT EXISTS visited_adventures (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_visited_user_adventure
 	ON visited_adventures(user_id, adventure_id);
 
+CREATE TABLE IF NOT EXISTS user_achievements (
+	user_id        TEXT NOT NULL,
+	achievement_id TEXT NOT NULL,
+	unlocked_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+	PRIMARY KEY (user_id, achievement_id)
+);
+
 CREATE TABLE IF NOT EXISTS schema_migrations (
 	version    INTEGER PRIMARY KEY,
 	applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -72,7 +82,46 @@ type migration struct {
 	up      func(tx *sql.Tx) error
 }
 
-var migrations = []migration{}
+var migrations = []migration{
+	{
+		version: 1,
+		name:    "add_reroll_tokens",
+		up: func(tx *sql.Tx) error {
+			_, err := tx.Exec(`
+				ALTER TABLE users
+					ADD COLUMN IF NOT EXISTS reroll_tokens INTEGER NOT NULL DEFAULT 5,
+					ADD COLUMN IF NOT EXISTS reroll_reset_at TIMESTAMPTZ NOT NULL DEFAULT now();
+			`)
+			return err
+		},
+	},
+	{
+		version: 2,
+		name:    "add_user_achievements",
+		up: func(tx *sql.Tx) error {
+			_, err := tx.Exec(`
+				CREATE TABLE IF NOT EXISTS user_achievements (
+					user_id        TEXT NOT NULL,
+					achievement_id TEXT NOT NULL,
+					unlocked_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+					PRIMARY KEY (user_id, achievement_id)
+				);
+			`)
+			return err
+		},
+	},
+	{
+		version: 3,
+		name:    "add_daily_quest_tracking",
+		up: func(tx *sql.Tx) error {
+			_, err := tx.Exec(`
+				ALTER TABLE users
+					ADD COLUMN IF NOT EXISTS last_quest_completed_at DATE;
+			`)
+			return err
+		},
+	},
+}
 
 // InitDB opens the Postgres database at the given connection string, ensures
 // the base schema exists, and runs any outstanding migrations.
