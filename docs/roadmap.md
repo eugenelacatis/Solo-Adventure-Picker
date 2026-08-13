@@ -136,7 +136,9 @@ reroll limits or tokens on top of. This milestone fixed both.
 ---
 
 ##  Phase 6 – Mobile & Real-World Integration
-- [ ] Convert app into mobile-friendly PWA or native wrapper
+- [x] Convert app into mobile-friendly PWA or native wrapper —
+      `vite-plugin-pwa` wired in with web manifest, auto-updating service
+      worker, cache-first map tiles, network-first API calls (2026-08-13)
 - [ ] Use GPS to suggest nearby adventures
 - [ ] Add location-based fog reveal
 - [ ] Estimate travel time and duration of adventure
