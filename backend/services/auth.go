@@ -33,7 +33,7 @@ func CreateSession(db *sql.DB, userId string) (string, time.Time, error) {
 	expiresAt := time.Now().Add(sessionDuration)
 
 	_, err := db.Exec(
-		`INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)`,
+		`INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)`,
 		token, userId, expiresAt,
 	)
 	if err != nil {
@@ -46,7 +46,7 @@ func ResolveSession(db *sql.DB, token string) (string, error) {
 	var userId string
 	var expiresAt time.Time
 	err := db.QueryRow(
-		`SELECT user_id, expires_at FROM sessions WHERE token = ?`, token,
+		`SELECT user_id, expires_at FROM sessions WHERE token = $1`, token,
 	).Scan(&userId, &expiresAt)
 	if err != nil {
 		return "", err

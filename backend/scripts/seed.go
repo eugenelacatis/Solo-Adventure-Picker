@@ -9,11 +9,11 @@ import (
 )
 
 func main() {
-	dbPath := os.Getenv("DB_PATH")
-	if dbPath == "" {
-		dbPath = "solo-adventure-picker.db"
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		log.Fatal("DATABASE_URL is required")
 	}
-	db := config.InitDB(dbPath)
+	db := config.InitDB(databaseURL)
 	defer db.Close()
 
 	var n int
@@ -49,16 +49,27 @@ func main() {
 		{Name: "Diablo Foothills Regional Park", Type: "hike", Region: "east-bay", XPValue: 150, Lat: 37.8564, Lng: -121.9350, Description: "Rock formations and open grassland trails at the base of Mount Diablo."},
 	}
 
-	stmt, err := db.Prepare(`INSERT INTO adventures (name, type, region, description, xp_value, lat, lng) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+	tx, err := db.Begin()
 	if err != nil {
+		log.Fatal(err)
+	}
+
+	stmt, err := tx.Prepare(`INSERT INTO adventures (name, type, region, description, xp_value, lat, lng) VALUES ($1, $2, $3, $4, $5, $6, $7)`)
+	if err != nil {
+		tx.Rollback()
 		log.Fatal(err)
 	}
 	defer stmt.Close()
 
 	for _, adv := range seed {
 		if _, err := stmt.Exec(adv.Name, adv.Type, adv.Region, adv.Description, adv.XPValue, adv.Lat, adv.Lng); err != nil {
+			tx.Rollback()
 			log.Fatal(err)
 		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		log.Fatal(err)
 	}
 	log.Printf("Seed inserted with %d adventures!\n", len(seed))
 }

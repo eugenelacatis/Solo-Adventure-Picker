@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 
@@ -10,16 +11,21 @@ import (
 )
 
 func main() {
-	dbPath := os.Getenv("DB_PATH")
-	if dbPath == "" {
-		dbPath = "solo-adventure-picker.db"
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		log.Fatal("DATABASE_URL is required")
 	}
-	db := config.InitDB(dbPath)
+	db := config.InitDB(databaseURL)
 	defer db.Close()
 
 	mux := http.NewServeMux()
 	routes.RegisterRoutes(mux, db)
 
-	fmt.Println("Server running at http://localhost:8080")
-	http.ListenAndServe(":8080", mux)
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	fmt.Printf("Server running at http://localhost:%s\n", port)
+	http.ListenAndServe(":"+port, mux)
 }

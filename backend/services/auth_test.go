@@ -1,11 +1,27 @@
 package services
 
 import (
+	"database/sql"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/eugenelacatis/solo-adventure-picker/config"
 )
+
+func testDB(t *testing.T) *sql.DB {
+	t.Helper()
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://postgres:postgres@localhost:5433/solo_adventure_picker?sslmode=disable"
+	}
+	db := config.InitDB(dsn)
+	t.Cleanup(func() {
+		db.Exec(`TRUNCATE TABLE sessions, journal_entries, visited_adventures, users, adventures RESTART IDENTITY CASCADE`)
+		db.Close()
+	})
+	return db
+}
 
 func TestHashPassword_CheckPassword_RoundTrip(t *testing.T) {
 	hash, err := HashPassword("correct-horse-battery-staple")
@@ -25,8 +41,7 @@ func TestHashPassword_CheckPassword_RoundTrip(t *testing.T) {
 }
 
 func TestCreateSession_ResolveSession_RoundTrip(t *testing.T) {
-	db := config.InitDB(":memory:")
-	defer db.Close()
+	db := testDB(t)
 
 	token, expiresAt, err := CreateSession(db, "user-1")
 	if err != nil {
@@ -49,8 +64,7 @@ func TestCreateSession_ResolveSession_RoundTrip(t *testing.T) {
 }
 
 func TestResolveSession_UnknownToken_ReturnsError(t *testing.T) {
-	db := config.InitDB(":memory:")
-	defer db.Close()
+	db := testDB(t)
 
 	if _, err := ResolveSession(db, "does-not-exist"); err == nil {
 		t.Errorf("ResolveSession succeeded for unknown token, want error")
@@ -58,11 +72,10 @@ func TestResolveSession_UnknownToken_ReturnsError(t *testing.T) {
 }
 
 func TestResolveSession_ExpiredToken_ReturnsError(t *testing.T) {
-	db := config.InitDB(":memory:")
-	defer db.Close()
+	db := testDB(t)
 
 	_, err := db.Exec(
-		`INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)`,
+		`INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)`,
 		"expired-token", "user-1", time.Now().Add(-time.Hour),
 	)
 	if err != nil {

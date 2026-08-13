@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"os"
 
 	"github.com/eugenelacatis/solo-adventure-picker/services"
 	"github.com/eugenelacatis/solo-adventure-picker/utils"
@@ -26,18 +27,32 @@ func newUserId() (string, error) {
 
 const sessionCookieName = "session"
 
+// sessionCookieAttrs returns the SameSite/Secure attributes session cookies
+// should carry. SameSite=None requires Secure, and Secure cookies are
+// rejected by browsers over plain http://localhost — so the cross-origin
+// attributes only apply once APP_ENV=production (i.e. once the frontend and
+// backend are actually on different https domains).
+func sessionCookieAttrs() (http.SameSite, bool) {
+	if os.Getenv("APP_ENV") == "production" {
+		return http.SameSiteNoneMode, true
+	}
+	return http.SameSiteLaxMode, false
+}
+
 func setSessionCookie(w http.ResponseWriter, db *sql.DB, userId string) error {
 	token, expiresAt, err := services.CreateSession(db, userId)
 	if err != nil {
 		return err
 	}
+	sameSite, secure := sessionCookieAttrs()
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    token,
 		Path:     "/",
 		Expires:  expiresAt,
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		Secure:   secure,
+		SameSite: sameSite,
 	})
 	return nil
 }
@@ -84,7 +99,7 @@ func registerAuthRoutes(mux *http.ServeMux, db *sql.DB) {
 		}
 
 		var exists int
-		db.QueryRow(`SELECT COUNT(*) FROM users WHERE email = ?`, body.Email).Scan(&exists)
+		db.QueryRow(`SELECT COUNT(*) FROM users WHERE email = $1`, body.Email).Scan(&exists)
 		if exists > 0 {
 			utils.WriteJSONError(w, http.StatusConflict, utils.APIError{
 				Error: "An account with that email already exists.",
@@ -112,7 +127,7 @@ func registerAuthRoutes(mux *http.ServeMux, db *sql.DB) {
 		}
 
 		_, err = db.Exec(
-			`INSERT INTO users (user_id, email, password_hash) VALUES (?, ?, ?)`,
+			`INSERT INTO users (user_id, email, password_hash) VALUES ($1, $2, $3)`,
 			userId, body.Email, passwordHash,
 		)
 		if err != nil {
@@ -148,7 +163,7 @@ func registerAuthRoutes(mux *http.ServeMux, db *sql.DB) {
 		}
 
 		var userId, passwordHash string
-		err := db.QueryRow(`SELECT user_id, password_hash FROM users WHERE email = ?`, body.Email).Scan(&userId, &passwordHash)
+		err := db.QueryRow(`SELECT user_id, password_hash FROM users WHERE email = $1`, body.Email).Scan(&userId, &passwordHash)
 		if err != nil || services.CheckPassword(passwordHash, body.Password) != nil {
 			utils.WriteJSONError(w, http.StatusUnauthorized, utils.APIError{
 				Error: "Invalid email or password.",
@@ -170,22 +185,24 @@ func registerAuthRoutes(mux *http.ServeMux, db *sql.DB) {
 
 	mux.HandleFunc("/auth/logout", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		if cookie, err := r.Cookie(sessionCookieName); err == nil {
-			db.Exec(`DELETE FROM sessions WHERE token = ?`, cookie.Value)
+			db.Exec(`DELETE FROM sessions WHERE token = $1`, cookie.Value)
 		}
+		sameSite, secure := sessionCookieAttrs()
 		http.SetCookie(w, &http.Cookie{
 			Name:     sessionCookieName,
 			Value:    "",
 			Path:     "/",
 			MaxAge:   -1,
 			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
+			Secure:   secure,
+			SameSite: sameSite,
 		})
 		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	}))
 
 	mux.HandleFunc("/auth/me", withCORS(requireAuth(db, func(w http.ResponseWriter, r *http.Request, userId string) {
 		var email string
-		if err := db.QueryRow(`SELECT email FROM users WHERE user_id = ?`, userId).Scan(&email); err != nil {
+		if err := db.QueryRow(`SELECT email FROM users WHERE user_id = $1`, userId).Scan(&email); err != nil {
 			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
 				Error: "Failed to fetch account.",
 				Code:  1018,

@@ -4,11 +4,18 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"os"
+	"strconv"
 
 	"github.com/eugenelacatis/solo-adventure-picker/models"
 	"github.com/eugenelacatis/solo-adventure-picker/services"
 	"github.com/eugenelacatis/solo-adventure-picker/utils"
 )
+
+// allowedOrigin is the production CORS allowlist. When unset (e.g. local
+// dev), withCORS falls back to echoing back whatever Origin the browser
+// sends, matching the previous unconditional-echo behavior.
+var allowedOrigin = os.Getenv("ALLOWED_ORIGIN")
 
 // withCORS wraps a handler so every route (including preflight OPTIONS
 // requests browsers send before non-simple methods like POST with a JSON
@@ -22,7 +29,7 @@ import (
 // Access-Control-Allow-Credentials: true.
 func withCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if origin := r.Header.Get("Origin"); origin != "" {
+		if origin := r.Header.Get("Origin"); origin != "" && (allowedOrigin == "" || origin == allowedOrigin) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 		}
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
@@ -46,7 +53,7 @@ func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 		query := `SELECT id, name, type, region, scenery, effort, duration, description, xp_value, lat, lng FROM adventures`
 		args := []interface{}{}
 		if region != "" {
-			query += ` WHERE region = ?`
+			query += ` WHERE region = $1`
 			args = append(args, region)
 		}
 		query += ` ORDER BY RANDOM() LIMIT 1`
@@ -115,9 +122,19 @@ func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 			return
 		}
 
-		_, err := db.Exec(
-			`INSERT INTO journal_entries (user_id, adventure_id, text, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)`,
-			userId, body.AdventureId, body.Text,
+		adventureId, err := strconv.ParseInt(body.AdventureId, 10, 64)
+		if err != nil {
+			utils.WriteJSONError(w, http.StatusBadRequest, utils.APIError{
+				Error:   "Invalid adventureId.",
+				Code:    1007,
+				Details: "adventureId must be a valid adventure ID.",
+			})
+			return
+		}
+
+		_, err = db.Exec(
+			`INSERT INTO journal_entries (user_id, adventure_id, text, created_at) VALUES ($1, $2, $3, now())`,
+			userId, adventureId, body.Text,
 		)
 		if err != nil {
 			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
@@ -149,14 +166,14 @@ func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 
 	mux.HandleFunc("/achievements", withCORS(requireAuth(db, func(w http.ResponseWriter, r *http.Request, userId string) {
 		var visitedCount, journalCount int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM visited_adventures WHERE user_id = ?`, userId).Scan(&visitedCount); err != nil {
+		if err := db.QueryRow(`SELECT COUNT(*) FROM visited_adventures WHERE user_id = $1`, userId).Scan(&visitedCount); err != nil {
 			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
 				Error: "Failed to fetch achievements.",
 				Code:  1009,
 			})
 			return
 		}
-		if err := db.QueryRow(`SELECT COUNT(*) FROM journal_entries WHERE user_id = ?`, userId).Scan(&journalCount); err != nil {
+		if err := db.QueryRow(`SELECT COUNT(*) FROM journal_entries WHERE user_id = $1`, userId).Scan(&journalCount); err != nil {
 			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
 				Error: "Failed to fetch achievements.",
 				Code:  1009,
@@ -174,7 +191,7 @@ const journalBonusXp = 25
 
 func getTotalXp(db *sql.DB, userId string) (int, error) {
 	var totalXp int
-	err := db.QueryRow(`SELECT total_xp FROM users WHERE user_id = ?`, userId).Scan(&totalXp)
+	err := db.QueryRow(`SELECT total_xp FROM users WHERE user_id = $1`, userId).Scan(&totalXp)
 	if err == sql.ErrNoRows {
 		return 0, nil
 	}
@@ -183,8 +200,8 @@ func getTotalXp(db *sql.DB, userId string) (int, error) {
 
 func addXp(db *sql.DB, userId string, xp int) error {
 	_, err := db.Exec(
-		`INSERT INTO users (user_id, total_xp) VALUES (?, ?)
-		 ON CONFLICT(user_id) DO UPDATE SET total_xp = total_xp + excluded.total_xp`,
+		`INSERT INTO users (user_id, total_xp) VALUES ($1, $2)
+		 ON CONFLICT(user_id) DO UPDATE SET total_xp = users.total_xp + excluded.total_xp`,
 		userId, xp,
 	)
 	return err
@@ -220,9 +237,19 @@ func postVisited(w http.ResponseWriter, r *http.Request, db *sql.DB, userId stri
 		return
 	}
 
+	adventureId, err := strconv.ParseInt(body.AdventureId, 10, 64)
+	if err != nil {
+		utils.WriteJSONError(w, http.StatusBadRequest, utils.APIError{
+			Error:   "Invalid adventureId.",
+			Code:    1004,
+			Details: "adventureId must be a valid adventure ID.",
+		})
+		return
+	}
+
 	var xpValue sql.NullInt64
 	var lat, lng sql.NullFloat64
-	err := db.QueryRow(`SELECT xp_value, lat, lng FROM adventures WHERE id = ?`, body.AdventureId).
+	err = db.QueryRow(`SELECT xp_value, lat, lng FROM adventures WHERE id = $1`, adventureId).
 		Scan(&xpValue, &lat, &lng)
 	if err == sql.ErrNoRows {
 		utils.WriteJSONError(w, http.StatusNotFound, utils.APIError{
@@ -240,9 +267,10 @@ func postVisited(w http.ResponseWriter, r *http.Request, db *sql.DB, userId stri
 	}
 
 	result, err := db.Exec(
-		`INSERT OR IGNORE INTO visited_adventures (user_id, adventure_id, lat, lng, created_at)
-		 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-		userId, body.AdventureId, lat.Float64, lng.Float64,
+		`INSERT INTO visited_adventures (user_id, adventure_id, lat, lng, created_at)
+		 VALUES ($1, $2, $3, $4, now())
+		 ON CONFLICT (user_id, adventure_id) DO NOTHING`,
+		userId, adventureId, lat.Float64, lng.Float64,
 	)
 	if err != nil {
 		utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
@@ -289,7 +317,7 @@ func getVisited(w http.ResponseWriter, r *http.Request, db *sql.DB, userId strin
 		SELECT v.adventure_id, a.name, v.lat, v.lng
 		FROM visited_adventures v
 		LEFT JOIN adventures a ON a.id = v.adventure_id
-		WHERE v.user_id = ?`, userId)
+		WHERE v.user_id = $1`, userId)
 	if err != nil {
 		utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
 			Error: "Failed to fetch visited adventures.",
@@ -302,14 +330,16 @@ func getVisited(w http.ResponseWriter, r *http.Request, db *sql.DB, userId strin
 	visited := []models.VisitedEntry{}
 	for rows.Next() {
 		var entry models.VisitedEntry
+		var adventureId int64
 		var name sql.NullString
-		if err := rows.Scan(&entry.AdventureId, &name, &entry.Lat, &entry.Lng); err != nil {
+		if err := rows.Scan(&adventureId, &name, &entry.Lat, &entry.Lng); err != nil {
 			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
 				Error: "Failed to fetch visited adventures.",
 				Code:  1010,
 			})
 			return
 		}
+		entry.AdventureId = strconv.FormatInt(adventureId, 10)
 		entry.Name = name.String
 		visited = append(visited, entry)
 	}

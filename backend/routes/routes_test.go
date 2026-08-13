@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"testing"
 
@@ -15,15 +16,22 @@ import (
 
 func newTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db := config.InitDB(":memory:")
-	t.Cleanup(func() { db.Close() })
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://postgres:postgres@localhost:5433/solo_adventure_picker?sslmode=disable"
+	}
+	db := config.InitDB(dsn)
+	t.Cleanup(func() {
+		db.Exec(`TRUNCATE TABLE sessions, journal_entries, visited_adventures, users, adventures RESTART IDENTITY CASCADE`)
+		db.Close()
+	})
 	return db
 }
 
 func insertTestAdventure(t *testing.T, db *sql.DB, adv models.Adventure) {
 	t.Helper()
 	_, err := db.Exec(
-		`INSERT INTO adventures (name, type, region, lat, lng) VALUES (?, ?, ?, ?, ?)`,
+		`INSERT INTO adventures (name, type, region, lat, lng) VALUES ($1, $2, $3, $4, $5)`,
 		adv.Name, adv.Type, adv.Region, adv.Lat, adv.Lng,
 	)
 	if err != nil {
@@ -203,16 +211,13 @@ func TestGetXPHandler_NewUser_ReturnsZero(t *testing.T) {
 // amount, which is exactly what this endpoint stopped doing).
 func insertTestAdventureWithXP(t *testing.T, db *sql.DB, name string, xpValue int, lat, lng float64) int64 {
 	t.Helper()
-	res, err := db.Exec(
-		`INSERT INTO adventures (name, type, region, xp_value, lat, lng) VALUES (?, ?, ?, ?, ?, ?)`,
+	var id int64
+	err := db.QueryRow(
+		`INSERT INTO adventures (name, type, region, xp_value, lat, lng) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
 		name, "hike", "bay-area", xpValue, lat, lng,
-	)
+	).Scan(&id)
 	if err != nil {
 		t.Fatalf("failed to insert test adventure: %v", err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		t.Fatalf("failed to read inserted adventure id: %v", err)
 	}
 	return id
 }
@@ -294,7 +299,7 @@ func TestPostVisitedHandler_DuplicateVisit_DoesNotAwardXPTwice(t *testing.T) {
 	}
 
 	var visitCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM visited_adventures WHERE user_id = (SELECT user_id FROM sessions WHERE token = ?)`, cookie.Value).Scan(&visitCount); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM visited_adventures WHERE user_id = (SELECT user_id FROM sessions WHERE token = $1)`, cookie.Value).Scan(&visitCount); err != nil {
 		t.Fatalf("failed to count visited_adventures rows: %v", err)
 	}
 	if visitCount != 1 {
@@ -324,8 +329,9 @@ func TestJournalHandler_SubmitsEntryAndAwardsBonusXP(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, db)
 
+	advId := insertTestAdventureWithXP(t, db, "Mount Tam", 150, 37.9235, -122.5965)
 	journalBody, _ := json.Marshal(map[string]string{
-		"adventureId": "adv-1",
+		"adventureId": strconv.FormatInt(advId, 10),
 		"text":        "Great hike today!",
 	})
 
@@ -362,12 +368,13 @@ func TestAchievementsHandler_ReflectsVisitedAndJournalCounts(t *testing.T) {
 	// "user-1" label passed in, so look up the real id via the session
 	// before seeding a row against it directly.
 	var userId string
-	if err := db.QueryRow(`SELECT user_id FROM sessions WHERE token = ?`, cookie.Value).Scan(&userId); err != nil {
+	if err := db.QueryRow(`SELECT user_id FROM sessions WHERE token = $1`, cookie.Value).Scan(&userId); err != nil {
 		t.Fatalf("failed to resolve userId from session: %v", err)
 	}
 
-	_, err := db.Exec(`INSERT INTO visited_adventures (user_id, adventure_id, lat, lng) VALUES (?, ?, ?, ?)`,
-		userId, "adv-1", 37.9, -122.5)
+	advId := insertTestAdventureWithXP(t, db, "Mount Tam", 150, 37.9, -122.5)
+	_, err := db.Exec(`INSERT INTO visited_adventures (user_id, adventure_id, lat, lng) VALUES ($1, $2, $3, $4)`,
+		userId, advId, 37.9, -122.5)
 	if err != nil {
 		t.Fatalf("failed to seed visited adventure: %v", err)
 	}

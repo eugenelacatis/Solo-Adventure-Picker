@@ -2,15 +2,14 @@ package config
 
 import (
 	"database/sql"
-	"fmt"
 	"log"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 const schema = `
 CREATE TABLE IF NOT EXISTS adventures (
-	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 	name        TEXT NOT NULL,
 	type        TEXT,
 	region      TEXT NOT NULL,
@@ -19,12 +18,12 @@ CREATE TABLE IF NOT EXISTS adventures (
 	duration    TEXT,
 	description TEXT,
 	xp_value    INTEGER,
-	lat         REAL,
-	lng         REAL
+	lat         DOUBLE PRECISION,
+	lng         DOUBLE PRECISION
 );
 
 CREATE TABLE IF NOT EXISTS users (
-	id            INTEGER PRIMARY KEY AUTOINCREMENT,
+	id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 	user_id       TEXT NOT NULL UNIQUE,
 	total_xp      INTEGER NOT NULL DEFAULT 0,
 	email         TEXT UNIQUE,
@@ -34,45 +33,51 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS sessions (
 	token      TEXT PRIMARY KEY,
 	user_id    TEXT NOT NULL,
-	expires_at DATETIME NOT NULL
+	expires_at TIMESTAMPTZ NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS journal_entries (
-	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 	user_id      TEXT NOT NULL,
-	adventure_id TEXT NOT NULL,
+	adventure_id BIGINT NOT NULL REFERENCES adventures(id),
 	text         TEXT NOT NULL,
-	created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS visited_adventures (
-	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 	user_id      TEXT NOT NULL,
-	adventure_id TEXT NOT NULL,
-	lat          REAL NOT NULL,
-	lng          REAL NOT NULL,
-	created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	adventure_id BIGINT NOT NULL REFERENCES adventures(id),
+	lat          DOUBLE PRECISION NOT NULL,
+	lng          DOUBLE PRECISION NOT NULL,
+	created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_visited_user_adventure
+	ON visited_adventures(user_id, adventure_id);
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+	version    INTEGER PRIMARY KEY,
+	applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 `
 
-// The unique index on visited_adventures is created by migrateV2, not here.
-// A legacy database may already contain duplicate (user_id, adventure_id)
-// rows; creating the index in createSchema would run before migrateV2 gets
-// a chance to dedupe them, and CREATE UNIQUE INDEX fails outright against
-// duplicate data. migrateV2 dedupes first and then creates the index, which
-// is a no-op-safe order for both legacy and brand-new databases (a fresh
-// database has zero duplicates, so the dedupe step there does nothing).
+// migration is a versioned, one-way schema change applied after the base
+// schema above. Add new entries here (in increasing version order) whenever
+// the schema needs to change for an already-deployed database; each up func
+// runs inside its own transaction.
+type migration struct {
+	version int
+	name    string
+	up      func(tx *sql.Tx) error
+}
 
-// schemaVersion is the current PRAGMA user_version. Bump it and add a case
-// to migrate whenever the schema changes so existing databases (which
-// CREATE TABLE IF NOT EXISTS alone cannot alter) get brought up to date.
-const schemaVersion = 2
+var migrations = []migration{}
 
-// InitDB opens the SQLite database at the given path (or ":memory:" for an
-// in-memory database), ensures the base schema exists, and runs any
-// outstanding migrations.
-func InitDB(path string) *sql.DB {
-	db, err := sql.Open("sqlite", path)
+// InitDB opens the Postgres database at the given connection string, ensures
+// the base schema exists, and runs any outstanding migrations.
+func InitDB(connString string) *sql.DB {
+	db, err := sql.Open("pgx", connString)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -85,7 +90,7 @@ func InitDB(path string) *sql.DB {
 	if err := migrate(db); err != nil {
 		log.Fatal(err)
 	}
-	log.Println("Connected to SQLite at", path)
+	log.Println("Connected to Postgres")
 	return db
 }
 
@@ -94,108 +99,36 @@ func createSchema(db *sql.DB) error {
 	return err
 }
 
-// migrate brings a database from whatever PRAGMA user_version it's at up to
-// schemaVersion, running each numbered step in order. A brand-new database
-// created by createSchema above already has every column and index the
-// migrations would add, so each step must be safe to run against both an
-// old database and (harmlessly) a fresh one.
+// migrate brings a database from whatever it recorded in schema_migrations up
+// to the latest version in migrations, running each pending step in order
+// inside its own transaction.
 func migrate(db *sql.DB) error {
-	var version int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+	var current int
+	if err := db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&current); err != nil {
 		return err
 	}
 
-	if version < 2 {
-		if err := migrateV2(db); err != nil {
+	for _, m := range migrations {
+		if m.version <= current {
+			continue
+		}
+
+		tx, err := db.Begin()
+		if err != nil {
 			return err
 		}
-		version = 2
-	}
-
-	_, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, version))
-	return err
-}
-
-// migrateV2 adds created_at timestamps, removes duplicate visited-adventure
-// rows recorded before dedupe was enforced, adds the unique index that
-// prevents future duplicates, and backfills xp_value for adventures seeded
-// before XP values were stored on the row.
-func migrateV2(db *sql.DB) error {
-	if err := addColumnIfMissing(db, "visited_adventures", "created_at", "DATETIME"); err != nil {
-		return err
-	}
-	if err := addColumnIfMissing(db, "journal_entries", "created_at", "DATETIME"); err != nil {
-		return err
-	}
-
-	if _, err := db.Exec(`
-		DELETE FROM visited_adventures
-		WHERE id NOT IN (
-			SELECT MIN(id) FROM visited_adventures GROUP BY user_id, adventure_id
-		)
-	`); err != nil {
-		return err
-	}
-
-	if _, err := db.Exec(`
-		CREATE UNIQUE INDEX IF NOT EXISTS idx_visited_user_adventure
-		ON visited_adventures(user_id, adventure_id)
-	`); err != nil {
-		return err
-	}
-
-	if _, err := db.Exec(`
-		UPDATE adventures SET xp_value = CASE type
-			WHEN 'hike' THEN 150
-			WHEN 'outdoor' THEN 150
-			WHEN 'food' THEN 75
-			WHEN 'cafe' THEN 75
-			WHEN 'culture' THEN 125
-			WHEN 'museum' THEN 125
-			ELSE 100
-		END
-		WHERE xp_value IS NULL
-	`); err != nil {
-		return err
-	}
-
-	if _, err := db.Exec(`
-		UPDATE adventures SET description = 'Embark on this adventure!'
-		WHERE description IS NULL OR description = ''
-	`); err != nil {
-		return err
+		if err := m.up(tx); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO schema_migrations (version) VALUES ($1)`, m.version); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
 	}
 
 	return nil
-}
-
-// addColumnIfMissing adds column to table if it isn't already present.
-// SQLite has no "ADD COLUMN IF NOT EXISTS", so PRAGMA table_info is checked
-// first; this also makes the migration safe to run against a fresh
-// database where createSchema already created the column.
-func addColumnIfMissing(db *sql.DB, table, column, colType string) error {
-	rows, err := db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var cid int
-		var name, ctype string
-		var notNull, pk int
-		var dflt interface{}
-		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
-			return err
-		}
-		if name == column {
-			return nil
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-
-	_, err = db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, colType))
-	return err
 }
