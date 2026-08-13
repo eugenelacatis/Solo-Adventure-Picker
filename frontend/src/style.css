@@ -1,11 +1,7 @@
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  color-scheme: light;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -13,21 +9,17 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
-}
-
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
   min-width: 320px;
   min-height: 100vh;
+  font-family: var(--font-body);
+  color: var(--color-ink-900);
+  background-color: var(--color-surface-50);
+}
+
+h1, h2, h3 {
+  font-family: var(--font-display);
 }
 
 h1 {
@@ -35,23 +27,48 @@ h1 {
   line-height: 1.1;
 }
 
+@media (max-width: 640px) {
+  h1 {
+    font-size: 2em;
+  }
+}
+
+a {
+  font-weight: 500;
+  color: var(--color-accent-600);
+  text-decoration: inherit;
+}
+a:hover {
+  color: var(--color-accent-500);
+}
+
 button {
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid transparent;
   padding: 0.6em 1.2em;
   font-size: 1em;
   font-weight: 500;
   font-family: inherit;
-  background-color: #1a1a1a;
   cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
 }
 button:focus,
 button:focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
+}
+
+input, select, textarea {
+  font-family: inherit;
+  font-size: 1rem;
+  padding: 0.6em 0.8em;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background-color: var(--color-surface-0);
+  color: var(--color-ink-900);
+}
+
+label {
+  font-weight: 500;
+  color: var(--color-ink-700);
 }
 
 .card {
@@ -61,19 +78,55 @@ button:focus-visible {
 #app {
   max-width: 1280px;
   margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
+@media (max-width: 640px) {
+  #app {
+    padding: 0 var(--space-3);
   }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+}
+
+/* Shared button system */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  border: 1px solid transparent;
+  padding: 0.7em 1.6em;
+  font-size: 1em;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.btn-primary {
+  background-color: var(--color-brand-600);
+  color: var(--color-surface-0);
+}
+.btn-primary:hover:not(:disabled) {
+  background-color: var(--color-brand-700);
+}
+
+.btn-secondary {
+  background-color: var(--color-accent-600);
+  color: var(--color-surface-0);
+}
+.btn-secondary:hover:not(:disabled) {
+  background-color: var(--color-accent-500);
+}
+
+.btn-ghost {
+  background-color: transparent;
+  color: var(--color-brand-700);
+  border-color: var(--color-border);
+}
+.btn-ghost:hover:not(:disabled) {
+  background-color: var(--color-brand-100);
 }

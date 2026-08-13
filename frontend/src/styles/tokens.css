@@ -1,0 +1,38 @@
+:root {
+  /* Brand green — trail/forest, more saturated than muted poster green */
+  --color-brand-600: #1b8a5a;
+  --color-brand-500: #22a06b;
+  --color-brand-700: #146b46;
+  --color-brand-100: #e3f6ec;
+
+  /* Accent blue — sky/water, secondary CTAs, map */
+  --color-accent-600: #1c7ed6;
+  --color-accent-500: #339af0;
+  --color-accent-100: #e7f4ff;
+
+  /* Energy amber — XP/achievement highlight, used sparingly */
+  --color-energy-500: #ffb020;
+  --color-energy-600: #e2960a;
+
+  /* Neutrals */
+  --color-ink-900: #16211c;
+  --color-ink-700: #3f4d47;
+  --color-ink-400: #7c8b84;
+  --color-surface-0: #ffffff;
+  --color-surface-50: #f5f9f6;
+  --color-surface-100: #e9f1ec;
+  --color-border: #d8e4de;
+
+  --color-error: #d94848;
+  --color-error-bg: #fdeaea;
+
+  --font-display: 'Outfit', 'Segoe UI', system-ui, sans-serif;
+  --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+
+  --space-1: 0.25rem;  --space-2: 0.5rem;  --space-3: 0.75rem;
+  --space-4: 1rem;     --space-6: 1.5rem;  --space-8: 2rem;   --space-12: 3rem;
+
+  --radius-sm: 8px; --radius-md: 12px; --radius-pill: 999px;
+  --shadow-card: 0 4px 8px rgba(22, 33, 28, 0.08);
+  --shadow-card-hover: 0 8px 20px rgba(22, 33, 28, 0.14);
+}

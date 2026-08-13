@@ -1,15 +1,59 @@
 .intro-page {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
-  max-width: 400px;
+}
+
+.demo-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  max-width: 420px;
   margin: 0 auto;
-  padding: 2rem;
+  padding: var(--space-8) var(--space-4);
   text-align: center;
 }
 
-.intro-page select, 
-.intro-page button {
-  padding: 0.5rem;
-  font-size: 1rem;
-} 
+.demo-section label {
+  align-self: center;
+}
+
+.demo-section select {
+  min-width: 220px;
+}
+
+.demo-card {
+  width: 100%;
+  background-color: var(--color-surface-0);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-6);
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.demo-card:hover {
+  box-shadow: var(--shadow-card-hover);
+  transform: translateY(-2px);
+}
+
+.demo-card h2 {
+  margin: 0 0 var(--space-2) 0;
+  color: var(--color-ink-900);
+  font-size: 1.5rem;
+}
+
+.demo-card-xp {
+  display: inline-block;
+  margin: 0;
+  background-color: var(--color-energy-500);
+  color: var(--color-ink-900);
+  font-weight: 600;
+  padding: 0.3rem 0.9rem;
+  border-radius: var(--radius-pill);
+}
+
+.auth-links {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}

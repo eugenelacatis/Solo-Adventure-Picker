@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.tsx'
+import './LoginPage.css'
 
 function LoginPage() {
   const { login } = useAuth()
@@ -46,7 +47,7 @@ function LoginPage() {
           required
         />
 
-        <button type="submit" disabled={isSubmitting}>Log In</button>
+        <button className="btn btn-primary" type="submit" disabled={isSubmitting}>Log In</button>
         {errorMsg && <p className="auth-error">{errorMsg}</p>}
       </form>
       <p>No account yet? <Link to="/signup">Sign up</Link></p>

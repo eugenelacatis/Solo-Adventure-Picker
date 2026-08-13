@@ -1,0 +1,50 @@
+.hero-banner {
+  position: relative;
+  overflow: hidden;
+  min-height: 60vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+}
+
+.hero-banner-bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  /* Gradient placeholder shows until the real photo file exists at HERO_IMAGE */
+  background-image: linear-gradient(135deg, var(--color-brand-600), var(--color-accent-600));
+  animation: ken-burns 24s ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+@keyframes ken-burns {
+  0%   { transform: scale(1) translate(0, 0); }
+  100% { transform: scale(1.12) translate(-2%, -1.5%); }
+}
+
+.hero-banner-content {
+  position: relative;
+  z-index: 1;
+  color: var(--color-surface-0);
+  text-align: center;
+  padding: var(--space-8);
+  max-width: 640px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-banner-bg {
+    animation: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .hero-banner {
+    min-height: 40vh;
+  }
+
+  .hero-banner-content {
+    padding: var(--space-4);
+  }
+}

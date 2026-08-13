@@ -4,6 +4,7 @@ import { demoAdventures } from '../data/demoAdventures.ts'
 import { regions } from '../data/regions.ts'
 import { capitalizeWords } from '../utils/formatting.ts'
 import { useAuth } from '../context/AuthContext.tsx'
+import HeroBanner from '../components/HeroBanner.tsx'
 import type { Adventure } from '../types.ts'
 import './HomePage.css'
 
@@ -33,36 +34,42 @@ function HomePage() {
 
   return (
     <div className="intro-page">
-      <h1>Welcome to Solo Adventure Picker</h1>
-      <p>Try a preview below, then sign up to explore the real map and save your progress.</p>
+      <HeroBanner>
+        <h1>Welcome to Solo Adventure Picker</h1>
+        <p>Try a preview below, then sign up to explore the real map and save your progress.</p>
+      </HeroBanner>
 
-      <select
-        value={selectedRegion}
-        onChange={(e) => handleRegionChange(e.target.value)}
-      >
-        {regions.map(region => (
-          <option key={region.value} value={region.value}>
-            {region.label}
-          </option>
-        ))}
-      </select>
+      <div className="demo-section">
+        <label htmlFor="region-select">Region</label>
+        <select
+          id="region-select"
+          value={selectedRegion}
+          onChange={(e) => handleRegionChange(e.target.value)}
+        >
+          {regions.map(region => (
+            <option key={region.value} value={region.value}>
+              {region.label}
+            </option>
+          ))}
+        </select>
 
-      <div className="demo-card">
-        <h2>{displayName}</h2>
-        <p>+{demoCard.xpValue}XP</p>
-      </div>
+        <div className="demo-card">
+          <h2>{displayName}</h2>
+          <p className="demo-card-xp">+{demoCard.xpValue}XP</p>
+        </div>
 
-      <button onClick={reroll}>Reroll</button>
+        <button className="btn btn-secondary" onClick={reroll}>Reroll</button>
 
-      <div className="auth-links">
-        {user ? (
-          <Link to="/adventure">Continue your adventure</Link>
-        ) : (
-          <>
-            <Link to="/signup">Sign Up</Link>
-            <Link to="/login">Log In</Link>
-          </>
-        )}
+        <div className="auth-links">
+          {user ? (
+            <Link className="btn btn-primary" to="/adventure">Continue your adventure</Link>
+          ) : (
+            <>
+              <Link className="btn btn-primary" to="/signup">Sign Up</Link>
+              <Link className="btn btn-ghost" to="/login">Log In</Link>
+            </>
+          )}
+        </div>
       </div>
     </div>
   )
