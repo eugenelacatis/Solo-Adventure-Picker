@@ -8,6 +8,55 @@
 .map-container {
   height: 500px;
   width: 100%;
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   margin-top: 1rem;
+}
+
+.region-progress {
+  list-style: none;
+  margin: 1rem 0 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-3);
+}
+
+.region-progress-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  background-color: var(--color-surface-0);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-2) var(--space-4);
+  min-width: 120px;
+}
+
+.region-progress-label {
+  font-weight: 600;
+  color: var(--color-ink-900);
+  font-size: 0.9rem;
+}
+
+.region-progress-count {
+  color: var(--color-ink-400);
+  font-size: 0.8rem;
+}
+
+@media (max-width: 640px) {
+  .map-page {
+    padding: 0;
+  }
+
+  .map-container {
+    height: 350px;
+    border-radius: 0;
+  }
+
+  .region-progress-item {
+    min-width: 100px;
+    padding: var(--space-2) var(--space-3);
+  }
 }

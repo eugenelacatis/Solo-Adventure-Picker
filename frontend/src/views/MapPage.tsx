@@ -5,6 +5,7 @@ import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
 import markerIcon from 'leaflet/dist/images/marker-icon.png'
 import markerShadow from 'leaflet/dist/images/marker-shadow.png'
 import { API_BASE } from '../api.ts'
+import { regions } from '../data/regions.ts'
 import HudHeader from '../components/HudHeader.tsx'
 import type { VisitedEntry, XpResponse } from '../types.ts'
 import 'leaflet/dist/leaflet.css'
@@ -41,6 +42,19 @@ function MapPage() {
     <div className="map-page">
       <h1>Your Explored World</h1>
       <HudHeader xp={xp} />
+
+      <ul className="region-progress">
+        {regions.map(r => {
+          const count = visited.filter(v => v.region === r.value).length
+          return (
+            <li key={r.value} className="region-progress-item">
+              <span className="region-progress-label">{r.label}</span>
+              <span className="region-progress-count">{count} visited</span>
+            </li>
+          )
+        })}
+      </ul>
+
       <MapContainer
         center={DEFAULT_CENTER}
         zoom={9}
@@ -56,7 +70,7 @@ function MapPage() {
             key={`fog-${i}`}
             center={[v.lat, v.lng]}
             radius={REVEAL_RADIUS_KM * 1000}
-            pathOptions={{ color: '#646cff', fillOpacity: 0.05 }}
+            pathOptions={{ color: '#1c7ed6', fillOpacity: 0.05 }}
           />
         ))}
         {visited.map((v, i) => (
