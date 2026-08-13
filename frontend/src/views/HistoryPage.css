@@ -1,0 +1,76 @@
+.history-page {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: var(--space-4);
+}
+
+.history-section {
+  margin-top: var(--space-8);
+}
+
+.history-section h2 {
+  font-size: 1.3rem;
+  margin-bottom: var(--space-3);
+}
+
+.history-empty {
+  color: var(--color-ink-400);
+}
+
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.history-item {
+  background-color: var(--color-surface-0);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.history-item-name {
+  font-weight: 600;
+  color: var(--color-ink-900);
+}
+
+.history-item-date {
+  color: var(--color-ink-400);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.history-journal-item {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.history-journal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.history-journal-text {
+  margin: var(--space-2) 0 0 0;
+  color: var(--color-ink-700);
+  line-height: 1.5;
+}
+
+@media (max-width: 480px) {
+  .history-item,
+  .history-journal-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-1);
+  }
+}

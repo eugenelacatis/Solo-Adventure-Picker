@@ -22,13 +22,32 @@ export interface XpResponse {
 export interface VisitedEntry {
   adventureId: string
   name?: string
+  region?: string
   lat: number
   lng: number
+  createdAt: string
+}
+
+export interface JournalEntryView {
+  adventureId: string
+  adventureName?: string
+  text: string
+  createdAt: string
 }
 
 export interface Achievement {
   id: string
   name: string
+}
+
+export interface RerollStatus {
+  rerollTokens: number
+  rerollResetAt: string
+}
+
+export interface QuestStatus {
+  description: string
+  completedToday: boolean
 }
 
 export interface ApiError {
