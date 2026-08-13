@@ -2,9 +2,10 @@ import { useState, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { API_BASE } from '../api.ts'
 import { regions } from '../data/regions.ts'
+import { adventureTypes, adventureEfforts } from '../data/adventureFilters.ts'
 import { capitalizeWords } from '../utils/formatting.ts'
 import HudHeader from '../components/HudHeader.tsx'
-import type { Adventure, XpResponse } from '../types.ts'
+import type { Adventure, XpResponse, RerollStatus } from '../types.ts'
 import './AdventurePage.css'
 
 function AdventurePage() {
@@ -19,13 +20,20 @@ function AdventurePage() {
   const [visitSaved, setVisitSaved] = useState(false)
   const [isSavingVisit, setIsSavingVisit] = useState(false)
   const [xp, setXp] = useState<XpResponse | null>(null)
+  const [rerollStatus, setRerollStatus] = useState<RerollStatus | null>(null)
 
   const region = searchParams.get('region') || ''
+  const type = searchParams.get('type') || ''
+  const effort = searchParams.get('effort') || ''
+
+  const rerollsLeft = rerollStatus?.rerollTokens ?? null
+  const outOfRerolls = rerollsLeft === 0
 
   const buttonText = useMemo(() => {
     if (isLoading) return 'Finding Adventure...'
+    if (outOfRerolls) return 'No Rerolls Left Today'
     return 'Pick Another Adventure'
-  }, [isLoading])
+  }, [isLoading, outOfRerolls])
 
   const displayName = useMemo(() =>
     capitalizeWords(adventure?.name), [adventure?.name]
@@ -44,6 +52,15 @@ function AdventurePage() {
     }
   }
 
+  const fetchRerollStatus = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/reroll-status`, { credentials: 'include' })
+      if (res.ok) setRerollStatus(await res.json())
+    } catch {
+      // Reroll button simply shows stale/default values if this fails.
+    }
+  }
+
   const getRandomAdventure = async () => {
     if (isLoading) return
 
@@ -54,7 +71,12 @@ function AdventurePage() {
     setVisitSaved(false)
 
     try {
-      const res = await fetch(`${API_BASE}/random?region=${region}`, { credentials: 'include' })
+      const params = new URLSearchParams()
+      if (region) params.set('region', region)
+      if (type) params.set('type', type)
+      if (effort) params.set('effort', effort)
+
+      const res = await fetch(`${API_BASE}/random?${params.toString()}`, { credentials: 'include' })
 
       if (!res.ok) {
         const errorJson = await res.json()
@@ -64,6 +86,7 @@ function AdventurePage() {
       const data: Adventure = await res.json()
       setAdventure(data)
       setErrorMsg('')
+      fetchRerollStatus()
     } catch (err) {
       setAdventure(null)
       setErrorMsg(err instanceof Error ? err.message : 'Something went wrong')
@@ -92,6 +115,7 @@ function AdventurePage() {
       setXp(await res.json())
       setJournalSaved(true)
       setErrorMsg('')
+      fetchRerollStatus()
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
@@ -128,6 +152,7 @@ function AdventurePage() {
 
   useEffect(() => {
     fetchXp()
+    fetchRerollStatus()
     getRandomAdventure()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -138,11 +163,46 @@ function AdventurePage() {
 
       <select
         value={region}
-        onChange={(e) => setSearchParams(e.target.value ? { region: e.target.value } : {})}
+        onChange={(e) => {
+          const next = new URLSearchParams(searchParams)
+          if (e.target.value) next.set('region', e.target.value)
+          else next.delete('region')
+          setSearchParams(next)
+        }}
       >
         <option value="">All Regions</option>
         {regions.map(r => (
           <option key={r.value} value={r.value}>{r.label}</option>
+        ))}
+      </select>
+
+      <select
+        value={type}
+        onChange={(e) => {
+          const next = new URLSearchParams(searchParams)
+          if (e.target.value) next.set('type', e.target.value)
+          else next.delete('type')
+          setSearchParams(next)
+        }}
+      >
+        <option value="">All Types</option>
+        {adventureTypes.map(t => (
+          <option key={t.value} value={t.value}>{t.label}</option>
+        ))}
+      </select>
+
+      <select
+        value={effort}
+        onChange={(e) => {
+          const next = new URLSearchParams(searchParams)
+          if (e.target.value) next.set('effort', e.target.value)
+          else next.delete('effort')
+          setSearchParams(next)
+        }}
+      >
+        <option value="">All Efforts</option>
+        {adventureEfforts.map(ef => (
+          <option key={ef.value} value={ef.value}>{ef.label}</option>
         ))}
       </select>
 
@@ -209,10 +269,13 @@ function AdventurePage() {
         <button
           className="reroll-btn"
           onClick={getRandomAdventure}
-          disabled={isLoading}
+          disabled={isLoading || outOfRerolls}
         >
           {buttonText}
         </button>
+        {rerollsLeft !== null && (
+          <p className="reroll-count">{rerollsLeft} reroll{rerollsLeft === 1 ? '' : 's'} left today</p>
+        )}
       </div>
     </div>
   )

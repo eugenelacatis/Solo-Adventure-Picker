@@ -116,6 +116,29 @@ describe('AdventurePage', () => {
     expect(requestBody.lng).toBeUndefined()
   })
 
+  it('shows remaining reroll count and disables the button when exhausted', async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/auth/me')) {
+        return Promise.resolve({ ok: true, json: async () => ({ userId: 'abc', email: 'hiker@example.com' }) })
+      }
+      if (String(url).includes('/random')) {
+        return Promise.resolve({ ok: true, json: async () => ({ id: 1, name: 'Mount Tamalpais', region: 'bay-area', xpValue: 150 }) })
+      }
+      if (String(url).includes('/reroll-status')) {
+        return Promise.resolve({ ok: true, json: async () => ({ rerollTokens: 0, rerollResetAt: '2026-08-14T00:00:00Z' }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ totalXp: 25, level: 1 }) })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderPage()
+
+    await waitFor(() => {
+      expect(screen.getByText('0 rerolls left today')).toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: /no rerolls left today/i })).toBeDisabled()
+  })
+
   it('shows an already-visited notice when the backend reports a repeat visit', async () => {
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (String(url).includes('/auth/me')) {
