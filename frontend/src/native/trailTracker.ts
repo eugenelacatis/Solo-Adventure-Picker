@@ -52,6 +52,18 @@ export async function flushBuffer(
   return res.json()
 }
 
+// resolveFlushedBuffer computes the buffer that remains after a flush of
+// `flushedCount` points succeeds. It splices off only that leading prefix
+// rather than clearing the whole buffer, so points pushed onto `current`
+// during the flush's in-flight await (which land after `flushedCount`)
+// survive instead of being silently discarded.
+export function resolveFlushedBuffer(
+  current: TrailPoint[],
+  flushedCount: number
+): TrailPoint[] {
+  return current.slice(flushedCount)
+}
+
 async function sampleAndMaybeFlush(): Promise<void> {
   const position = await Geolocation.getCurrentPosition()
   buffer.push({
@@ -62,10 +74,10 @@ async function sampleAndMaybeFlush(): Promise<void> {
   saveBuffer()
 
   if (shouldFlush(buffer.length, Date.now() - lastFlushAt)) {
-    const toFlush = buffer
+    const toFlush = buffer.slice()
     try {
       await flushBuffer(toFlush, API_BASE)
-      buffer = []
+      buffer = resolveFlushedBuffer(buffer, toFlush.length)
       lastFlushAt = Date.now()
       saveBuffer()
     } catch {
