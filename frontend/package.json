@@ -11,6 +11,8 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@capacitor/core": "^8.5.0",
+    "@capacitor/geolocation": "^8.2.2",
     "@turf/turf": "^7.4.0",
     "leaflet": "^1.9.4",
     "react": "^18.2.0",
