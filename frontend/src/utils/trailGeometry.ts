@@ -21,5 +21,5 @@ export function bufferTrail(
       ? point([points[0].lng, points[0].lat])
       : lineString(points.map(p => [p.lng, p.lat]))
 
-  return buffer(geometry, bufferMeters, { units: 'meters' })
+  return buffer(geometry, bufferMeters, { units: 'meters' }) ?? null
 }
