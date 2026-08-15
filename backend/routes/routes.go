@@ -238,7 +238,7 @@ const dailyRerollAllowance = 5
 // actually spent; remaining is the token count after this call either way.
 func consumeReroll(db *sql.DB, userId string) (allowed bool, remaining int, err error) {
 	_, err = db.Exec(
-		`INSERT INTO users (user_id, reroll_tokens, reroll_reset_at) VALUES ($1, $2, now())
+		`INSERT INTO users (user_id, reroll_tokens, reroll_reset_at) VALUES ($1, $2, now() + interval '1 day')
 		 ON CONFLICT (user_id) DO NOTHING`,
 		userId, dailyRerollAllowance,
 	)

@@ -505,6 +505,19 @@ func TestJournalHandler_AwardsBonusRerollToken(t *testing.T) {
 
 	cookie := signUpTestUser(t, mux, "user-1")
 
+	// Consume the daily quest bonus via an unrelated visit first, so the
+	// journal submission below is isolated to its own per-entry bonus
+	// rather than also picking up the one-time daily-quest bonus (see
+	// TestQuestHandler_DoesNotDoubleAwardOnSecondActivityInSameDay for the
+	// same pattern).
+	visitBody, _ := json.Marshal(map[string]string{"adventureId": strconv.FormatInt(advId, 10)})
+	visitReq := authedRequest(http.MethodPost, "/visited", visitBody, cookie)
+	visitRec := httptest.NewRecorder()
+	mux.ServeHTTP(visitRec, visitReq)
+	if visitRec.Code != http.StatusOK {
+		t.Fatalf("mark visited failed with status %d: %s", visitRec.Code, visitRec.Body.String())
+	}
+
 	statusReq := authedRequest(http.MethodGet, "/reroll-status", nil, cookie)
 	statusRec := httptest.NewRecorder()
 	mux.ServeHTTP(statusRec, statusReq)
