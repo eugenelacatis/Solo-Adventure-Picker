@@ -55,3 +55,13 @@ export interface ApiError {
   code?: number
   details?: string
 }
+
+export interface TrailPoint {
+  lat: number
+  lng: number
+  recordedAt: string
+}
+
+export interface TrailUploadResponse {
+  newlyVisited: Adventure[]
+}
