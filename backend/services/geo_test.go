@@ -10,10 +10,12 @@ func TestHaversineMiles_SamePoint_ReturnsZero(t *testing.T) {
 }
 
 func TestHaversineMiles_KnownDistance_MatchesExpected(t *testing.T) {
-	// San Francisco City Hall to Golden Gate Bridge toll plaza, ~4.9 miles.
+	// Great-circle distance between these two SF coordinates is ~4.27 miles
+	// (independently verified); the window allows for minor floating-point variance
+	// without pinning an exact value.
 	d := HaversineMiles(37.7793, -122.4193, 37.8199, -122.4783)
-	if d < 4.5 || d > 5.3 {
-		t.Errorf("HaversineMiles(SF landmarks) = %v, want ~4.9 miles", d)
+	if d < 4.0 || d > 4.5 {
+		t.Errorf("HaversineMiles(SF coordinates) = %v, want ~4.27 miles", d)
 	}
 }
 
