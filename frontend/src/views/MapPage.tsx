@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, GeoJSON } from 'react-leaflet'
 import L from 'leaflet'
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
 import markerIcon from 'leaflet/dist/images/marker-icon.png'
@@ -7,7 +7,8 @@ import markerShadow from 'leaflet/dist/images/marker-shadow.png'
 import { API_BASE } from '../api.ts'
 import { regions } from '../data/regions.ts'
 import HudHeader from '../components/HudHeader.tsx'
-import type { VisitedEntry, XpResponse } from '../types.ts'
+import { bufferTrail } from '../utils/trailGeometry.ts'
+import type { VisitedEntry, XpResponse, TrailPoint } from '../types.ts'
 import 'leaflet/dist/leaflet.css'
 import './MapPage.css'
 
@@ -25,6 +26,7 @@ const DEFAULT_CENTER: [number, number] = [37.5, -122.2] // Bay Area
 function MapPage() {
   const [visited, setVisited] = useState<VisitedEntry[]>([])
   const [xp, setXp] = useState<XpResponse | null>(null)
+  const [trail, setTrail] = useState<TrailPoint[]>([])
 
   useEffect(() => {
     fetch(`${API_BASE}/visited`, { credentials: 'include' })
@@ -36,7 +38,14 @@ function MapPage() {
       .then(res => (res.ok ? res.json() : null))
       .then(setXp)
       .catch(() => setXp(null))
+
+    fetch(`${API_BASE}/trail`, { credentials: 'include' })
+      .then(res => (res.ok ? res.json() : []))
+      .then(setTrail)
+      .catch(() => setTrail([]))
   }, [])
+
+  const fogReveal = bufferTrail(trail, REVEAL_RADIUS_KM * 1000)
 
   return (
     <div className="map-page">
@@ -65,14 +74,13 @@ function MapPage() {
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        {visited.map((v, i) => (
-          <Circle
-            key={`fog-${i}`}
-            center={[v.lat, v.lng]}
-            radius={REVEAL_RADIUS_KM * 1000}
+        {fogReveal && (
+          <GeoJSON
+            key={trail.length}
+            data={fogReveal}
             pathOptions={{ color: '#1c7ed6', fillOpacity: 0.05 }}
           />
-        ))}
+        )}
         {visited.map((v, i) => (
           <Marker
             key={`marker-${i}`}
