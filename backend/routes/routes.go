@@ -183,6 +183,15 @@ func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 		}
 	})))
 
+	mux.HandleFunc("/trail", withCORS(requireAuth(db, func(w http.ResponseWriter, r *http.Request, userId string) {
+		switch r.Method {
+		case http.MethodPost:
+			postTrail(w, r, db, userId)
+		default:
+			getTrail(w, r, db, userId)
+		}
+	})))
+
 	mux.HandleFunc("/achievements", withCORS(requireAuth(db, func(w http.ResponseWriter, r *http.Request, userId string) {
 		var visitedCount, journalCount int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM visited_adventures WHERE user_id = $1`, userId).Scan(&visitedCount); err != nil {
@@ -525,6 +534,143 @@ func awardVisit(db *sql.DB, userId string, adventureId int64, lat, lng float64, 
 	}
 
 	return alreadyVisited, nil
+}
+
+// trailMatchRadiusMiles is how close a trail point must be to an adventure
+// to auto-mark it visited — ~150ft, deliberately tight so driving past on a
+// nearby road doesn't silently complete a hike. Separate from any
+// dashboard fog-reveal visual radius, which can be more generous.
+const trailMatchRadiusMiles = 150.0 / 5280.0
+
+// postTrail stores userId's uploaded trail points and, for each one, checks
+// every adventure for proximity within trailMatchRadiusMiles. Any adventure
+// close enough that userId hasn't already visited is marked visited via the
+// same awardVisit path postVisited uses, so XP math isn't duplicated.
+func postTrail(w http.ResponseWriter, r *http.Request, db *sql.DB, userId string) {
+	var body struct {
+		Points []models.TrailPoint `json:"points"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		utils.WriteJSONError(w, http.StatusBadRequest, utils.APIError{
+			Error: "Invalid trail points payload.",
+			Code:  1019,
+		})
+		return
+	}
+
+	for _, p := range body.Points {
+		if _, err := db.Exec(
+			`INSERT INTO trail_points (user_id, lat, lng, recorded_at) VALUES ($1, $2, $3, $4)`,
+			userId, p.Lat, p.Lng, p.RecordedAt,
+		); err != nil {
+			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
+				Error: "Failed to save trail points.",
+				Code:  1020,
+			})
+			return
+		}
+	}
+
+	rows, err := db.Query(`SELECT id, name, type, region, scenery, effort, duration, description, xp_value, lat, lng FROM adventures`)
+	if err != nil {
+		utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
+			Error: "Failed to check trail proximity.",
+			Code:  1021,
+		})
+		return
+	}
+	type candidate struct {
+		adv models.Adventure
+	}
+	var candidates []candidate
+	for rows.Next() {
+		var adv models.Adventure
+		var advType, scenery, effort, duration, description sql.NullString
+		var xpValue sql.NullInt64
+		var lat, lng sql.NullFloat64
+		if err := rows.Scan(&adv.ID, &adv.Name, &advType, &adv.Region, &scenery, &effort, &duration, &description, &xpValue, &lat, &lng); err != nil {
+			rows.Close()
+			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
+				Error: "Failed to check trail proximity.",
+				Code:  1021,
+			})
+			return
+		}
+		adv.Type = advType.String
+		adv.Scenery = scenery.String
+		adv.Effort = effort.String
+		adv.Duration = duration.String
+		adv.Description = description.String
+		adv.XPValue = int(xpValue.Int64)
+		adv.Lat = lat.Float64
+		adv.Lng = lng.Float64
+		candidates = append(candidates, candidate{adv: adv})
+	}
+	rows.Close()
+
+	newlyVisited := []models.Adventure{}
+	matched := map[int64]bool{}
+	for _, p := range body.Points {
+		for _, c := range candidates {
+			if matched[c.adv.ID] {
+				continue
+			}
+			if services.HaversineMiles(p.Lat, p.Lng, c.adv.Lat, c.adv.Lng) > trailMatchRadiusMiles {
+				continue
+			}
+			alreadyVisited, err := awardVisit(db, userId, c.adv.ID, c.adv.Lat, c.adv.Lng, c.adv.XPValue)
+			if err != nil {
+				utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
+					Error: "Failed to award trail visit.",
+					Code:  1022,
+				})
+				return
+			}
+			matched[c.adv.ID] = true
+			if !alreadyVisited {
+				newlyVisited = append(newlyVisited, c.adv)
+			}
+		}
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"newlyVisited": newlyVisited,
+	})
+}
+
+// getTrail returns userId's uploaded trail points in chronological capture
+// order (by recorded_at, not upload order) so the dashboard can render the
+// path correctly even if batches arrived late or out of order.
+func getTrail(w http.ResponseWriter, r *http.Request, db *sql.DB, userId string) {
+	rows, err := db.Query(
+		`SELECT lat, lng, recorded_at FROM trail_points WHERE user_id = $1 ORDER BY recorded_at ASC`,
+		userId,
+	)
+	if err != nil {
+		utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
+			Error: "Failed to fetch trail points.",
+			Code:  1023,
+		})
+		return
+	}
+	defer rows.Close()
+
+	points := []models.TrailPoint{}
+	for rows.Next() {
+		var p models.TrailPoint
+		var recordedAt time.Time
+		if err := rows.Scan(&p.Lat, &p.Lng, &recordedAt); err != nil {
+			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
+				Error: "Failed to fetch trail points.",
+				Code:  1023,
+			})
+			return
+		}
+		p.RecordedAt = recordedAt.Format(time.RFC3339)
+		points = append(points, p)
+	}
+
+	json.NewEncoder(w).Encode(points)
 }
 
 // postVisited records userId visiting an adventure and awards its XP value.

@@ -13,3 +13,9 @@ type Adventure struct {
 	Lat         float64 `json:"lat,omitempty"`
 	Lng         float64 `json:"lng,omitempty"`
 }
+
+type TrailPoint struct {
+	Lat        float64 `json:"lat"`
+	Lng        float64 `json:"lng"`
+	RecordedAt string  `json:"recordedAt"`
+}

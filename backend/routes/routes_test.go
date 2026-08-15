@@ -932,6 +932,132 @@ func TestGetVisitedHandler_NoVisits_ReturnsEmptyArray(t *testing.T) {
 	}
 }
 
+func TestPostTrail_PointNearAdventure_MarksVisitedAndAwardsXp(t *testing.T) {
+	db := newTestDB(t)
+	insertTestAdventure(t, db, models.Adventure{Name: "Mount Tam", Type: "hike", Region: "bay-area", Lat: 37.9235, Lng: -122.5965})
+
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+	cookie := signUpTestUser(t, mux, "trail-match")
+
+	// ~30ft from the adventure — well within the 150ft match radius.
+	body, _ := json.Marshal(map[string]interface{}{
+		"points": []map[string]interface{}{
+			{"lat": 37.92353, "lng": -122.5965, "recordedAt": "2026-08-13T10:00:00Z"},
+		},
+	})
+	req := authedRequest(http.MethodPost, "/trail", body, cookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		NewlyVisited []models.Adventure `json:"newlyVisited"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.NewlyVisited) != 1 || resp.NewlyVisited[0].Name != "Mount Tam" {
+		t.Fatalf("newlyVisited = %+v, want [Mount Tam]", resp.NewlyVisited)
+	}
+
+	var visitedCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM visited_adventures WHERE user_id = (SELECT user_id FROM sessions WHERE token = $1)`, cookie.Value).Scan(&visitedCount); err != nil {
+		t.Fatalf("query visited_adventures: %v", err)
+	}
+	if visitedCount != 1 {
+		t.Errorf("visited_adventures count = %d, want 1", visitedCount)
+	}
+}
+
+func TestPostTrail_PointFarFromAdventure_DoesNotMatch(t *testing.T) {
+	db := newTestDB(t)
+	insertTestAdventure(t, db, models.Adventure{Name: "Mount Tam", Type: "hike", Region: "bay-area", Lat: 37.9235, Lng: -122.5965})
+
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+	cookie := signUpTestUser(t, mux, "trail-nomatch")
+
+	// ~5 miles away — outside the 150ft match radius.
+	body, _ := json.Marshal(map[string]interface{}{
+		"points": []map[string]interface{}{
+			{"lat": 37.87, "lng": -122.53, "recordedAt": "2026-08-13T10:00:00Z"},
+		},
+	})
+	req := authedRequest(http.MethodPost, "/trail", body, cookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		NewlyVisited []models.Adventure `json:"newlyVisited"`
+	}
+	json.NewDecoder(rec.Body).Decode(&resp)
+	if len(resp.NewlyVisited) != 0 {
+		t.Errorf("newlyVisited = %+v, want empty", resp.NewlyVisited)
+	}
+}
+
+func TestPostTrail_NoSession_Returns401(t *testing.T) {
+	db := newTestDB(t)
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+
+	body, _ := json.Marshal(map[string]interface{}{"points": []map[string]interface{}{}})
+	req := httptest.NewRequest(http.MethodPost, "/trail", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestGetTrail_ReturnsPointsInChronologicalOrder(t *testing.T) {
+	db := newTestDB(t)
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+	cookie := signUpTestUser(t, mux, "trail-get")
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"points": []map[string]interface{}{
+			{"lat": 37.1, "lng": -122.1, "recordedAt": "2026-08-13T10:00:00Z"},
+			{"lat": 37.2, "lng": -122.2, "recordedAt": "2026-08-13T10:01:00Z"},
+		},
+	})
+	postReq := authedRequest(http.MethodPost, "/trail", body, cookie)
+	postRec := httptest.NewRecorder()
+	mux.ServeHTTP(postRec, postReq)
+	if postRec.Code != http.StatusOK {
+		t.Fatalf("seed POST /trail failed: status %d, body %s", postRec.Code, postRec.Body.String())
+	}
+
+	getReq := authedRequest(http.MethodGet, "/trail", nil, cookie)
+	getRec := httptest.NewRecorder()
+	mux.ServeHTTP(getRec, getReq)
+
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", getRec.Code, getRec.Body.String())
+	}
+
+	var points []models.TrailPoint
+	if err := json.NewDecoder(getRec.Body).Decode(&points); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(points) != 2 {
+		t.Fatalf("len(points) = %d, want 2", len(points))
+	}
+	if points[0].Lat != 37.1 || points[1].Lat != 37.2 {
+		t.Errorf("points = %+v, want chronological order (37.1 then 37.2)", points)
+	}
+}
+
 func TestJournalHandler_EmptyText_Returns400(t *testing.T) {
 	db := newTestDB(t)
 	mux := http.NewServeMux()
