@@ -492,6 +492,41 @@ func postJournal(w http.ResponseWriter, r *http.Request, db *sql.DB, userId stri
 	writeXpResponse(w, totalXp, false)
 }
 
+// awardVisit records userId visiting adventureId at (lat, lng) and awards
+// xpValue XP, unless they've already visited it (the unique index on
+// (user_id, adventure_id) makes the insert a no-op on repeat visits, so XP
+// is only ever awarded once per adventure per user). Shared by postVisited
+// (manual visit) and the trail proximity-match path (POST /trail) so XP
+// math isn't duplicated between the two ways a visit can be recorded.
+func awardVisit(db *sql.DB, userId string, adventureId int64, lat, lng float64, xpValue int) (alreadyVisited bool, err error) {
+	result, err := db.Exec(
+		`INSERT INTO visited_adventures (user_id, adventure_id, lat, lng, created_at)
+		 VALUES ($1, $2, $3, $4, now())
+		 ON CONFLICT (user_id, adventure_id) DO NOTHING`,
+		userId, adventureId, lat, lng,
+	)
+	if err != nil {
+		return false, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	alreadyVisited = rowsAffected == 0
+
+	if !alreadyVisited {
+		if err := addXp(db, userId, xpValue); err != nil {
+			return false, err
+		}
+		if _, err := completeDailyQuestIfFirst(db, userId); err != nil {
+			return false, err
+		}
+	}
+
+	return alreadyVisited, nil
+}
+
 // postVisited records userId visiting an adventure and awards its XP value.
 // The client sends only the adventure ID — XP amount and coordinates are
 // looked up server-side so they can't be forged. A unique index on
@@ -538,45 +573,13 @@ func postVisited(w http.ResponseWriter, r *http.Request, db *sql.DB, userId stri
 		return
 	}
 
-	result, err := db.Exec(
-		`INSERT INTO visited_adventures (user_id, adventure_id, lat, lng, created_at)
-		 VALUES ($1, $2, $3, $4, now())
-		 ON CONFLICT (user_id, adventure_id) DO NOTHING`,
-		userId, adventureId, lat.Float64, lng.Float64,
-	)
+	alreadyVisited, err := awardVisit(db, userId, adventureId, lat.Float64, lng.Float64, int(xpValue.Int64))
 	if err != nil {
 		utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
 			Error: "Failed to record visited adventure.",
 			Code:  1006,
 		})
 		return
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
-			Error: "Failed to record visited adventure.",
-			Code:  1006,
-		})
-		return
-	}
-	alreadyVisited := rowsAffected == 0
-
-	if !alreadyVisited {
-		if err := addXp(db, userId, int(xpValue.Int64)); err != nil {
-			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
-				Error: "Failed to award XP.",
-				Code:  1005,
-			})
-			return
-		}
-		if _, err := completeDailyQuestIfFirst(db, userId); err != nil {
-			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
-				Error: "Failed to update daily quest.",
-				Code:  1017,
-			})
-			return
-		}
 	}
 
 	totalXp, err := getTotalXp(db, userId)
