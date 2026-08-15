@@ -48,6 +48,58 @@ func withCORS(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// adventureScanDest holds the nullable intermediates that both /random's
+// single-row scan and postTrail's multi-row scan need, since adventures.type,
+// scenery, effort, duration, description, xp_value, lat, and lng can all be
+// NULL in the schema but models.Adventure's fields are non-pointer. dest()
+// returns the pointers to pass to either *sql.Row.Scan or *sql.Rows.Scan;
+// into() converts the scanned intermediates into a models.Adventure.
+type adventureScanDest struct {
+	adv                                      models.Adventure
+	advType, scenery, effort, duration, desc sql.NullString
+	xpValue                                  sql.NullInt64
+	lat, lng                                 sql.NullFloat64
+}
+
+func (d *adventureScanDest) dest() []interface{} {
+	return []interface{}{&d.adv.ID, &d.adv.Name, &d.advType, &d.adv.Region, &d.scenery, &d.effort, &d.duration, &d.desc, &d.xpValue, &d.lat, &d.lng}
+}
+
+func (d *adventureScanDest) into() models.Adventure {
+	adv := d.adv
+	adv.Type = d.advType.String
+	adv.Scenery = d.scenery.String
+	adv.Effort = d.effort.String
+	adv.Duration = d.duration.String
+	adv.Description = d.desc.String
+	adv.XPValue = int(d.xpValue.Int64)
+	adv.Lat = d.lat.Float64
+	adv.Lng = d.lng.Float64
+	return adv
+}
+
+// scanAdventureRow scans a single-row `SELECT id, name, type, region,
+// scenery, effort, duration, description, xp_value, lat, lng FROM
+// adventures` result (as used by /random) into a models.Adventure.
+func scanAdventureRow(row *sql.Row) (models.Adventure, error) {
+	var d adventureScanDest
+	if err := row.Scan(d.dest()...); err != nil {
+		return models.Adventure{}, err
+	}
+	return d.into(), nil
+}
+
+// scanAdventureRows scans one row of a multi-row `SELECT id, name, type,
+// region, scenery, effort, duration, description, xp_value, lat, lng FROM
+// adventures` result (as used by postTrail) into a models.Adventure.
+func scanAdventureRows(rows *sql.Rows) (models.Adventure, error) {
+	var d adventureScanDest
+	if err := rows.Scan(d.dest()...); err != nil {
+		return models.Adventure{}, err
+	}
+	return d.into(), nil
+}
+
 func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 
 	mux.HandleFunc("/random", withCORS(requireAuth(db, func(w http.ResponseWriter, r *http.Request, userId string) {
@@ -94,12 +146,7 @@ func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 
 		row := db.QueryRow(query, args...)
 
-		var adv models.Adventure
-		var advType, scenery, effort, duration, description sql.NullString
-		var xpValue sql.NullInt64
-		var lat, lng sql.NullFloat64
-
-		err = row.Scan(&adv.ID, &adv.Name, &advType, &adv.Region, &scenery, &effort, &duration, &description, &xpValue, &lat, &lng)
+		adv, err := scanAdventureRow(row)
 		if err != nil {
 			utils.WriteJSONError(w, http.StatusNotFound, utils.APIError{
 				Error:   "No matching adventure found.",
@@ -107,15 +154,6 @@ func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 				Details: "Region either has no adventures or the database is down. Womp womp."})
 			return
 		}
-
-		adv.Type = advType.String
-		adv.Scenery = scenery.String
-		adv.Effort = effort.String
-		adv.Duration = duration.String
-		adv.Description = description.String
-		adv.XPValue = int(xpValue.Int64)
-		adv.Lat = lat.Float64
-		adv.Lng = lng.Float64
 
 		json.NewEncoder(w).Encode(adv)
 	})))
@@ -584,11 +622,8 @@ func postTrail(w http.ResponseWriter, r *http.Request, db *sql.DB, userId string
 	}
 	var candidates []candidate
 	for rows.Next() {
-		var adv models.Adventure
-		var advType, scenery, effort, duration, description sql.NullString
-		var xpValue sql.NullInt64
-		var lat, lng sql.NullFloat64
-		if err := rows.Scan(&adv.ID, &adv.Name, &advType, &adv.Region, &scenery, &effort, &duration, &description, &xpValue, &lat, &lng); err != nil {
+		adv, err := scanAdventureRows(rows)
+		if err != nil {
 			rows.Close()
 			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
 				Error: "Failed to check trail proximity.",
@@ -596,14 +631,6 @@ func postTrail(w http.ResponseWriter, r *http.Request, db *sql.DB, userId string
 			})
 			return
 		}
-		adv.Type = advType.String
-		adv.Scenery = scenery.String
-		adv.Effort = effort.String
-		adv.Duration = duration.String
-		adv.Description = description.String
-		adv.XPValue = int(xpValue.Int64)
-		adv.Lat = lat.Float64
-		adv.Lng = lng.Float64
 		candidates = append(candidates, candidate{adv: adv})
 	}
 	rows.Close()
