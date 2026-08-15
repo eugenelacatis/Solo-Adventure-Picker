@@ -8,6 +8,7 @@ import { API_BASE } from '../api.ts'
 import { regions } from '../data/regions.ts'
 import HudHeader from '../components/HudHeader.tsx'
 import { bufferTrail } from '../utils/trailGeometry.ts'
+import { startTracking, stopTracking, isTracking } from '../native/trailTracker.ts'
 import type { VisitedEntry, XpResponse, TrailPoint } from '../types.ts'
 import 'leaflet/dist/leaflet.css'
 import './MapPage.css'
@@ -27,6 +28,16 @@ function MapPage() {
   const [visited, setVisited] = useState<VisitedEntry[]>([])
   const [xp, setXp] = useState<XpResponse | null>(null)
   const [trail, setTrail] = useState<TrailPoint[]>([])
+  const [tracking, setTracking] = useState(isTracking())
+
+  const toggleTracking = () => {
+    if (tracking) {
+      stopTracking()
+    } else {
+      startTracking()
+    }
+    setTracking(!tracking)
+  }
 
   useEffect(() => {
     fetch(`${API_BASE}/visited`, { credentials: 'include' })
@@ -51,6 +62,14 @@ function MapPage() {
     <div className="map-page">
       <h1>Your Explored World</h1>
       <HudHeader xp={xp} />
+      <button
+        type="button"
+        className="trail-tracking-toggle"
+        onClick={toggleTracking}
+        data-testid="trail-tracking-toggle"
+      >
+        {tracking ? 'Stop Trail Tracking' : 'Start Trail Tracking'}
+      </button>
 
       <ul className="region-progress">
         {regions.map(r => {

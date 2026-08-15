@@ -45,6 +45,17 @@
   font-size: 0.8rem;
 }
 
+.trail-tracking-toggle {
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  border: none;
+  background-color: var(--color-surface-0);
+  box-shadow: var(--shadow-card);
+  font-weight: 600;
+  cursor: pointer;
+}
+
 @media (max-width: 640px) {
   .map-page {
     padding: 0;
