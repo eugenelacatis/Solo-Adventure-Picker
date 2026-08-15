@@ -88,3 +88,25 @@ func TestInitDB_NewDatabaseHasVisitedUniqueIndex(t *testing.T) {
 		t.Errorf("idx_visited_user_adventure index not found: %v", err)
 	}
 }
+
+func TestMigrate_AddsTrailPointsTable(t *testing.T) {
+	db := testDB(t)
+
+	_, err := db.Exec(
+		`INSERT INTO trail_points (user_id, lat, lng, recorded_at) VALUES ($1, $2, $3, now())`,
+		"test-user", 37.8651, -119.5383,
+	)
+	if err != nil {
+		t.Fatalf("insert into trail_points failed: %v", err)
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM trail_points WHERE user_id = $1`, "test-user").Scan(&count); err != nil {
+		t.Fatalf("query trail_points failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("count = %d, want 1", count)
+	}
+
+	db.Exec(`TRUNCATE TABLE trail_points`)
+}

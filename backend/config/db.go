@@ -66,6 +66,17 @@ CREATE TABLE IF NOT EXISTS user_achievements (
 	PRIMARY KEY (user_id, achievement_id)
 );
 
+CREATE TABLE IF NOT EXISTS trail_points (
+	id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+	user_id     TEXT NOT NULL,
+	lat         DOUBLE PRECISION NOT NULL,
+	lng         DOUBLE PRECISION NOT NULL,
+	recorded_at TIMESTAMPTZ NOT NULL,
+	created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_trail_points_user ON trail_points(user_id, recorded_at);
+
 CREATE TABLE IF NOT EXISTS schema_migrations (
 	version    INTEGER PRIMARY KEY,
 	applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -133,6 +144,24 @@ var migrations = []migration{
 			_, err := tx.Exec(`
 				ALTER TABLE users
 					ALTER COLUMN reroll_reset_at SET DEFAULT (now() + interval '1 day');
+			`)
+			return err
+		},
+	},
+	{
+		version: 5,
+		name:    "add_trail_points",
+		up: func(tx *sql.Tx) error {
+			_, err := tx.Exec(`
+				CREATE TABLE IF NOT EXISTS trail_points (
+					id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+					user_id     TEXT NOT NULL,
+					lat         DOUBLE PRECISION NOT NULL,
+					lng         DOUBLE PRECISION NOT NULL,
+					recorded_at TIMESTAMPTZ NOT NULL,
+					created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+				);
+				CREATE INDEX IF NOT EXISTS idx_trail_points_user ON trail_points(user_id, recorded_at);
 			`)
 			return err
 		},
