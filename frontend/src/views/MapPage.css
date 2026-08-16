@@ -56,6 +56,15 @@
   cursor: pointer;
 }
 
+.trail-discovery-notice {
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface-0);
+  box-shadow: var(--shadow-card);
+  font-weight: 600;
+}
+
 @media (max-width: 640px) {
   .map-page {
     padding: 0;

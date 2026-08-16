@@ -665,14 +665,39 @@ func postTrail(w http.ResponseWriter, r *http.Request, db *sql.DB, userId string
 	})
 }
 
+// defaultTrailLimit bounds GET /trail's payload size when the caller omits
+// (or sends an invalid) limit param, per the spec's requirement that the
+// endpoint stay bounded as trails accumulate over time.
+const defaultTrailLimit = 5000
+const maxTrailLimit = 5000
+
 // getTrail returns userId's uploaded trail points in chronological capture
 // order (by recorded_at, not upload order) so the dashboard can render the
-// path correctly even if batches arrived late or out of order.
+// path correctly even if batches arrived late or out of order. Accepts an
+// optional `since` (RFC3339 timestamp) to filter by recorded_at and a
+// `limit` to bound row count, capped at maxTrailLimit and defaulting to
+// defaultTrailLimit when absent or invalid.
 func getTrail(w http.ResponseWriter, r *http.Request, db *sql.DB, userId string) {
-	rows, err := db.Query(
-		`SELECT lat, lng, recorded_at FROM trail_points WHERE user_id = $1 ORDER BY recorded_at ASC`,
-		userId,
-	)
+	since := r.URL.Query().Get("since")
+	limit := defaultTrailLimit
+	if limitParam := r.URL.Query().Get("limit"); limitParam != "" {
+		if parsed, err := strconv.Atoi(limitParam); err == nil && parsed > 0 && parsed <= maxTrailLimit {
+			limit = parsed
+		}
+	}
+
+	query := `SELECT lat, lng, recorded_at FROM trail_points WHERE user_id = $1`
+	args := []interface{}{userId}
+	if since != "" {
+		if sinceTime, err := time.Parse(time.RFC3339, since); err == nil {
+			args = append(args, sinceTime)
+			query += fmt.Sprintf(` AND recorded_at >= $%d`, len(args))
+		}
+	}
+	args = append(args, limit)
+	query += fmt.Sprintf(` ORDER BY recorded_at ASC LIMIT $%d`, len(args))
+
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
 			Error: "Failed to fetch trail points.",

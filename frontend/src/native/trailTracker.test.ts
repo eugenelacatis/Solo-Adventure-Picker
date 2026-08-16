@@ -1,6 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { shouldFlush, flushBuffer, resolveFlushedBuffer } from './trailTracker'
 import type { TrailPoint } from '../types'
+
+const getCurrentPosition = vi.fn()
+vi.mock('@capacitor/geolocation', () => ({
+  Geolocation: {
+    getCurrentPosition: (...args: unknown[]) => getCurrentPosition(...args),
+  },
+}))
+vi.mock('@capacitor/core', () => ({
+  Capacitor: {
+    isNativePlatform: () => true,
+  },
+}))
+
+const { shouldFlush, flushBuffer, resolveFlushedBuffer, startTracking, stopTracking, isTracking } =
+  await import('./trailTracker')
 
 describe('shouldFlush', () => {
   it('is false when neither threshold is met', () => {
@@ -85,5 +99,70 @@ describe('resolveFlushedBuffer', () => {
   it('returns an empty buffer when nothing was added during the flush', () => {
     const points: TrailPoint[] = [{ lat: 1, lng: 1, recordedAt: '2026-08-13T10:00:00Z' }]
     expect(resolveFlushedBuffer(points, points.length)).toEqual([])
+  })
+})
+
+describe('sampleAndMaybeFlush (via startTracking interval tick)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    localStorage.clear()
+    getCurrentPosition.mockReset()
+    vi.stubGlobal('fetch', vi.fn())
+  })
+
+  afterEach(() => {
+    stopTracking()
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  it('does not throw or produce an unhandled rejection when getCurrentPosition rejects', async () => {
+    getCurrentPosition.mockRejectedValue(new Error('permission denied'))
+    const unhandled = vi.fn()
+    window.addEventListener('unhandledrejection', unhandled)
+
+    startTracking()
+    await vi.advanceTimersByTimeAsync(20_000)
+
+    expect(unhandled).not.toHaveBeenCalled()
+    expect(isTracking()).toBe(true)
+
+    window.removeEventListener('unhandledrejection', unhandled)
+  })
+
+  it('invokes the onNewlyVisited callback when a flush resolves with newly-visited adventures', async () => {
+    getCurrentPosition.mockResolvedValue({
+      coords: { latitude: 1, longitude: 2 },
+      timestamp: Date.parse('2026-08-13T10:00:00Z'),
+    })
+    const newlyVisited = [{ id: 1, name: 'Mount Tam', region: 'bay-area' }]
+    ;(fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => ({ newlyVisited }),
+    })
+    const onNewlyVisited = vi.fn()
+
+    startTracking(onNewlyVisited)
+    // FLUSH_SIZE_THRESHOLD is 20 samples; force the flush via the 60s timer instead.
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    expect(onNewlyVisited).toHaveBeenCalledWith(newlyVisited)
+  })
+
+  it('does not invoke the callback when a flush resolves with an empty newlyVisited list', async () => {
+    getCurrentPosition.mockResolvedValue({
+      coords: { latitude: 1, longitude: 2 },
+      timestamp: Date.parse('2026-08-13T10:00:00Z'),
+    })
+    ;(fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => ({ newlyVisited: [] }),
+    })
+    const onNewlyVisited = vi.fn()
+
+    startTracking(onNewlyVisited)
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    expect(onNewlyVisited).not.toHaveBeenCalled()
   })
 })

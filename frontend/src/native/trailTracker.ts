@@ -1,7 +1,7 @@
 import { Capacitor } from '@capacitor/core'
 import { Geolocation } from '@capacitor/geolocation'
 import { API_BASE } from '../api.ts'
-import type { TrailPoint, TrailUploadResponse } from '../types.ts'
+import type { Adventure, TrailPoint, TrailUploadResponse } from '../types.ts'
 
 const SAMPLE_INTERVAL_MS = 20_000
 const FLUSH_INTERVAL_MS = 60_000
@@ -11,6 +11,7 @@ const BUFFER_STORAGE_KEY = 'sap-trail-buffer'
 let buffer: TrailPoint[] = loadBuffer()
 let sampleTimer: ReturnType<typeof setInterval> | null = null
 let lastFlushAt = Date.now()
+let onNewlyVisited: ((adventures: Adventure[]) => void) | undefined
 
 function loadBuffer(): TrailPoint[] {
   try {
@@ -65,21 +66,29 @@ export function resolveFlushedBuffer(
 }
 
 async function sampleAndMaybeFlush(): Promise<void> {
-  const position = await Geolocation.getCurrentPosition()
-  buffer.push({
-    lat: position.coords.latitude,
-    lng: position.coords.longitude,
-    recordedAt: new Date(position.timestamp).toISOString(),
-  })
-  saveBuffer()
+  try {
+    const position = await Geolocation.getCurrentPosition()
+    buffer.push({
+      lat: position.coords.latitude,
+      lng: position.coords.longitude,
+      recordedAt: new Date(position.timestamp).toISOString(),
+    })
+    saveBuffer()
+  } catch {
+    // GPS read or buffer persist failed; skip this tick and retry next interval.
+    return
+  }
 
   if (shouldFlush(buffer.length, Date.now() - lastFlushAt)) {
     const toFlush = buffer.slice()
     try {
-      await flushBuffer(toFlush, API_BASE)
+      const response = await flushBuffer(toFlush, API_BASE)
       buffer = resolveFlushedBuffer(buffer, toFlush.length)
       lastFlushAt = Date.now()
       saveBuffer()
+      if (response.newlyVisited.length > 0) {
+        onNewlyVisited?.(response.newlyVisited)
+      }
     } catch {
       // Leave buffer intact; next sample's shouldFlush check will retry.
     }
@@ -88,11 +97,14 @@ async function sampleAndMaybeFlush(): Promise<void> {
 
 // startTracking begins foreground GPS sampling. No-op on the web build —
 // only native iOS (Capacitor.isNativePlatform()) actually samples, so
-// calling this unconditionally from UI code is always safe.
-export function startTracking(): void {
+// calling this unconditionally from UI code is always safe. The optional
+// onNewlyVisited callback fires after a flush yields newly-visited
+// adventures, so callers can surface a discovery notice.
+export function startTracking(newlyVisitedCallback?: (adventures: Adventure[]) => void): void {
   if (!Capacitor.isNativePlatform() || sampleTimer !== null) {
     return
   }
+  onNewlyVisited = newlyVisitedCallback
   lastFlushAt = Date.now()
   sampleTimer = setInterval(sampleAndMaybeFlush, SAMPLE_INTERVAL_MS)
 }
@@ -102,6 +114,7 @@ export function stopTracking(): void {
     clearInterval(sampleTimer)
     sampleTimer = null
   }
+  onNewlyVisited = undefined
 }
 
 export function isTracking(): boolean {

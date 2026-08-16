@@ -1058,6 +1058,58 @@ func TestGetTrail_ReturnsPointsInChronologicalOrder(t *testing.T) {
 	}
 }
 
+func TestGetTrail_LimitAndSinceParamsBoundResults(t *testing.T) {
+	db := newTestDB(t)
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+	cookie := signUpTestUser(t, mux, "trail-bounds")
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"points": []map[string]interface{}{
+			{"lat": 37.1, "lng": -122.1, "recordedAt": "2026-08-13T10:00:00Z"},
+			{"lat": 37.2, "lng": -122.2, "recordedAt": "2026-08-13T10:01:00Z"},
+			{"lat": 37.3, "lng": -122.3, "recordedAt": "2026-08-13T10:02:00Z"},
+		},
+	})
+	postReq := authedRequest(http.MethodPost, "/trail", body, cookie)
+	postRec := httptest.NewRecorder()
+	mux.ServeHTTP(postRec, postReq)
+	if postRec.Code != http.StatusOK {
+		t.Fatalf("seed POST /trail failed: status %d, body %s", postRec.Code, postRec.Body.String())
+	}
+
+	limitReq := authedRequest(http.MethodGet, "/trail?limit=2", nil, cookie)
+	limitRec := httptest.NewRecorder()
+	mux.ServeHTTP(limitRec, limitReq)
+	if limitRec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", limitRec.Code, limitRec.Body.String())
+	}
+	var limitedPoints []models.TrailPoint
+	if err := json.NewDecoder(limitRec.Body).Decode(&limitedPoints); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(limitedPoints) != 2 {
+		t.Fatalf("len(limitedPoints) = %d, want 2", len(limitedPoints))
+	}
+	if limitedPoints[0].Lat != 37.1 || limitedPoints[1].Lat != 37.2 {
+		t.Errorf("limitedPoints = %+v, want the 2 oldest points", limitedPoints)
+	}
+
+	sinceReq := authedRequest(http.MethodGet, "/trail?since=2026-08-13T10:01:30Z", nil, cookie)
+	sinceRec := httptest.NewRecorder()
+	mux.ServeHTTP(sinceRec, sinceReq)
+	if sinceRec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", sinceRec.Code, sinceRec.Body.String())
+	}
+	var sincePoints []models.TrailPoint
+	if err := json.NewDecoder(sinceRec.Body).Decode(&sincePoints); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(sincePoints) != 1 || sincePoints[0].Lat != 37.3 {
+		t.Errorf("sincePoints = %+v, want only the point recorded after the since timestamp", sincePoints)
+	}
+}
+
 func TestJournalHandler_EmptyText_Returns400(t *testing.T) {
 	db := newTestDB(t)
 	mux := http.NewServeMux()
