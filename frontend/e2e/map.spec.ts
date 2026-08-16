@@ -35,6 +35,16 @@ test.beforeEach(async ({ page }) => {
       body: JSON.stringify([{ id: 'first-adventure', name: 'First Adventure' }]),
     })
   )
+  await page.route('http://localhost:8080/trail', route =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        { lat: 37.9235, lng: -122.5965, recordedAt: '2026-08-13T10:00:00Z' },
+        { lat: 37.9240, lng: -122.5970, recordedAt: '2026-08-13T10:00:20Z' },
+      ]),
+    })
+  )
 })
 
 test('renders a real Leaflet map with a marker per visited adventure', async ({ page }) => {
@@ -61,4 +71,11 @@ test('renders the map with zero markers when nothing has been visited', async ({
 
   await expect(page.locator('.leaflet-container')).toBeVisible()
   await expect(page.locator('.leaflet-marker-icon')).toHaveCount(0)
+})
+
+test('renders a fog-reveal polygon from trail points', async ({ page }) => {
+  await page.goto('/map')
+
+  await expect(page.locator('.leaflet-container')).toBeVisible()
+  await expect(page.locator('path.leaflet-interactive')).toHaveCount(1)
 })

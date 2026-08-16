@@ -48,6 +48,58 @@ func withCORS(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// adventureScanDest holds the nullable intermediates that both /random's
+// single-row scan and postTrail's multi-row scan need, since adventures.type,
+// scenery, effort, duration, description, xp_value, lat, and lng can all be
+// NULL in the schema but models.Adventure's fields are non-pointer. dest()
+// returns the pointers to pass to either *sql.Row.Scan or *sql.Rows.Scan;
+// into() converts the scanned intermediates into a models.Adventure.
+type adventureScanDest struct {
+	adv                                      models.Adventure
+	advType, scenery, effort, duration, desc sql.NullString
+	xpValue                                  sql.NullInt64
+	lat, lng                                 sql.NullFloat64
+}
+
+func (d *adventureScanDest) dest() []interface{} {
+	return []interface{}{&d.adv.ID, &d.adv.Name, &d.advType, &d.adv.Region, &d.scenery, &d.effort, &d.duration, &d.desc, &d.xpValue, &d.lat, &d.lng}
+}
+
+func (d *adventureScanDest) into() models.Adventure {
+	adv := d.adv
+	adv.Type = d.advType.String
+	adv.Scenery = d.scenery.String
+	adv.Effort = d.effort.String
+	adv.Duration = d.duration.String
+	adv.Description = d.desc.String
+	adv.XPValue = int(d.xpValue.Int64)
+	adv.Lat = d.lat.Float64
+	adv.Lng = d.lng.Float64
+	return adv
+}
+
+// scanAdventureRow scans a single-row `SELECT id, name, type, region,
+// scenery, effort, duration, description, xp_value, lat, lng FROM
+// adventures` result (as used by /random) into a models.Adventure.
+func scanAdventureRow(row *sql.Row) (models.Adventure, error) {
+	var d adventureScanDest
+	if err := row.Scan(d.dest()...); err != nil {
+		return models.Adventure{}, err
+	}
+	return d.into(), nil
+}
+
+// scanAdventureRows scans one row of a multi-row `SELECT id, name, type,
+// region, scenery, effort, duration, description, xp_value, lat, lng FROM
+// adventures` result (as used by postTrail) into a models.Adventure.
+func scanAdventureRows(rows *sql.Rows) (models.Adventure, error) {
+	var d adventureScanDest
+	if err := rows.Scan(d.dest()...); err != nil {
+		return models.Adventure{}, err
+	}
+	return d.into(), nil
+}
+
 func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 
 	mux.HandleFunc("/random", withCORS(requireAuth(db, func(w http.ResponseWriter, r *http.Request, userId string) {
@@ -94,12 +146,7 @@ func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 
 		row := db.QueryRow(query, args...)
 
-		var adv models.Adventure
-		var advType, scenery, effort, duration, description sql.NullString
-		var xpValue sql.NullInt64
-		var lat, lng sql.NullFloat64
-
-		err = row.Scan(&adv.ID, &adv.Name, &advType, &adv.Region, &scenery, &effort, &duration, &description, &xpValue, &lat, &lng)
+		adv, err := scanAdventureRow(row)
 		if err != nil {
 			utils.WriteJSONError(w, http.StatusNotFound, utils.APIError{
 				Error:   "No matching adventure found.",
@@ -107,15 +154,6 @@ func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 				Details: "Region either has no adventures or the database is down. Womp womp."})
 			return
 		}
-
-		adv.Type = advType.String
-		adv.Scenery = scenery.String
-		adv.Effort = effort.String
-		adv.Duration = duration.String
-		adv.Description = description.String
-		adv.XPValue = int(xpValue.Int64)
-		adv.Lat = lat.Float64
-		adv.Lng = lng.Float64
 
 		json.NewEncoder(w).Encode(adv)
 	})))
@@ -183,6 +221,15 @@ func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 		}
 	})))
 
+	mux.HandleFunc("/trail", withCORS(requireAuth(db, func(w http.ResponseWriter, r *http.Request, userId string) {
+		switch r.Method {
+		case http.MethodPost:
+			postTrail(w, r, db, userId)
+		default:
+			getTrail(w, r, db, userId)
+		}
+	})))
+
 	mux.HandleFunc("/achievements", withCORS(requireAuth(db, func(w http.ResponseWriter, r *http.Request, userId string) {
 		var visitedCount, journalCount int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM visited_adventures WHERE user_id = $1`, userId).Scan(&visitedCount); err != nil {
@@ -238,7 +285,7 @@ const dailyRerollAllowance = 5
 // actually spent; remaining is the token count after this call either way.
 func consumeReroll(db *sql.DB, userId string) (allowed bool, remaining int, err error) {
 	_, err = db.Exec(
-		`INSERT INTO users (user_id, reroll_tokens, reroll_reset_at) VALUES ($1, $2, now())
+		`INSERT INTO users (user_id, reroll_tokens, reroll_reset_at) VALUES ($1, $2, now() + interval '1 day')
 		 ON CONFLICT (user_id) DO NOTHING`,
 		userId, dailyRerollAllowance,
 	)
@@ -492,6 +539,192 @@ func postJournal(w http.ResponseWriter, r *http.Request, db *sql.DB, userId stri
 	writeXpResponse(w, totalXp, false)
 }
 
+// awardVisit records userId visiting adventureId at (lat, lng) and awards
+// xpValue XP, unless they've already visited it (the unique index on
+// (user_id, adventure_id) makes the insert a no-op on repeat visits, so XP
+// is only ever awarded once per adventure per user). Shared by postVisited
+// (manual visit) and the trail proximity-match path (POST /trail) so XP
+// math isn't duplicated between the two ways a visit can be recorded.
+func awardVisit(db *sql.DB, userId string, adventureId int64, lat, lng float64, xpValue int) (alreadyVisited bool, err error) {
+	result, err := db.Exec(
+		`INSERT INTO visited_adventures (user_id, adventure_id, lat, lng, created_at)
+		 VALUES ($1, $2, $3, $4, now())
+		 ON CONFLICT (user_id, adventure_id) DO NOTHING`,
+		userId, adventureId, lat, lng,
+	)
+	if err != nil {
+		return false, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	alreadyVisited = rowsAffected == 0
+
+	if !alreadyVisited {
+		if err := addXp(db, userId, xpValue); err != nil {
+			return false, err
+		}
+		if _, err := completeDailyQuestIfFirst(db, userId); err != nil {
+			return false, err
+		}
+	}
+
+	return alreadyVisited, nil
+}
+
+// trailMatchRadiusMiles is how close a trail point must be to an adventure
+// to auto-mark it visited — ~150ft, deliberately tight so driving past on a
+// nearby road doesn't silently complete a hike. Separate from any
+// dashboard fog-reveal visual radius, which can be more generous.
+const trailMatchRadiusMiles = 150.0 / 5280.0
+
+// postTrail stores userId's uploaded trail points and, for each one, checks
+// every adventure for proximity within trailMatchRadiusMiles. Any adventure
+// close enough that userId hasn't already visited is marked visited via the
+// same awardVisit path postVisited uses, so XP math isn't duplicated.
+func postTrail(w http.ResponseWriter, r *http.Request, db *sql.DB, userId string) {
+	var body struct {
+		Points []models.TrailPoint `json:"points"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		utils.WriteJSONError(w, http.StatusBadRequest, utils.APIError{
+			Error: "Invalid trail points payload.",
+			Code:  1019,
+		})
+		return
+	}
+
+	for _, p := range body.Points {
+		if _, err := db.Exec(
+			`INSERT INTO trail_points (user_id, lat, lng, recorded_at) VALUES ($1, $2, $3, $4)`,
+			userId, p.Lat, p.Lng, p.RecordedAt,
+		); err != nil {
+			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
+				Error: "Failed to save trail points.",
+				Code:  1020,
+			})
+			return
+		}
+	}
+
+	rows, err := db.Query(`SELECT id, name, type, region, scenery, effort, duration, description, xp_value, lat, lng FROM adventures`)
+	if err != nil {
+		utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
+			Error: "Failed to check trail proximity.",
+			Code:  1021,
+		})
+		return
+	}
+	type candidate struct {
+		adv models.Adventure
+	}
+	var candidates []candidate
+	for rows.Next() {
+		adv, err := scanAdventureRows(rows)
+		if err != nil {
+			rows.Close()
+			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
+				Error: "Failed to check trail proximity.",
+				Code:  1021,
+			})
+			return
+		}
+		candidates = append(candidates, candidate{adv: adv})
+	}
+	rows.Close()
+
+	newlyVisited := []models.Adventure{}
+	matched := map[int64]bool{}
+	for _, p := range body.Points {
+		for _, c := range candidates {
+			if matched[c.adv.ID] {
+				continue
+			}
+			if services.HaversineMiles(p.Lat, p.Lng, c.adv.Lat, c.adv.Lng) > trailMatchRadiusMiles {
+				continue
+			}
+			alreadyVisited, err := awardVisit(db, userId, c.adv.ID, c.adv.Lat, c.adv.Lng, c.adv.XPValue)
+			if err != nil {
+				utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
+					Error: "Failed to award trail visit.",
+					Code:  1022,
+				})
+				return
+			}
+			matched[c.adv.ID] = true
+			if !alreadyVisited {
+				newlyVisited = append(newlyVisited, c.adv)
+			}
+		}
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"newlyVisited": newlyVisited,
+	})
+}
+
+// defaultTrailLimit bounds GET /trail's payload size when the caller omits
+// (or sends an invalid) limit param, per the spec's requirement that the
+// endpoint stay bounded as trails accumulate over time.
+const defaultTrailLimit = 5000
+const maxTrailLimit = 5000
+
+// getTrail returns userId's uploaded trail points in chronological capture
+// order (by recorded_at, not upload order) so the dashboard can render the
+// path correctly even if batches arrived late or out of order. Accepts an
+// optional `since` (RFC3339 timestamp) to filter by recorded_at and a
+// `limit` to bound row count, capped at maxTrailLimit and defaulting to
+// defaultTrailLimit when absent or invalid.
+func getTrail(w http.ResponseWriter, r *http.Request, db *sql.DB, userId string) {
+	since := r.URL.Query().Get("since")
+	limit := defaultTrailLimit
+	if limitParam := r.URL.Query().Get("limit"); limitParam != "" {
+		if parsed, err := strconv.Atoi(limitParam); err == nil && parsed > 0 && parsed <= maxTrailLimit {
+			limit = parsed
+		}
+	}
+
+	query := `SELECT lat, lng, recorded_at FROM trail_points WHERE user_id = $1`
+	args := []interface{}{userId}
+	if since != "" {
+		if sinceTime, err := time.Parse(time.RFC3339, since); err == nil {
+			args = append(args, sinceTime)
+			query += fmt.Sprintf(` AND recorded_at >= $%d`, len(args))
+		}
+	}
+	args = append(args, limit)
+	query += fmt.Sprintf(` ORDER BY recorded_at ASC LIMIT $%d`, len(args))
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
+			Error: "Failed to fetch trail points.",
+			Code:  1023,
+		})
+		return
+	}
+	defer rows.Close()
+
+	points := []models.TrailPoint{}
+	for rows.Next() {
+		var p models.TrailPoint
+		var recordedAt time.Time
+		if err := rows.Scan(&p.Lat, &p.Lng, &recordedAt); err != nil {
+			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
+				Error: "Failed to fetch trail points.",
+				Code:  1023,
+			})
+			return
+		}
+		p.RecordedAt = recordedAt.Format(time.RFC3339)
+		points = append(points, p)
+	}
+
+	json.NewEncoder(w).Encode(points)
+}
+
 // postVisited records userId visiting an adventure and awards its XP value.
 // The client sends only the adventure ID — XP amount and coordinates are
 // looked up server-side so they can't be forged. A unique index on
@@ -538,45 +771,13 @@ func postVisited(w http.ResponseWriter, r *http.Request, db *sql.DB, userId stri
 		return
 	}
 
-	result, err := db.Exec(
-		`INSERT INTO visited_adventures (user_id, adventure_id, lat, lng, created_at)
-		 VALUES ($1, $2, $3, $4, now())
-		 ON CONFLICT (user_id, adventure_id) DO NOTHING`,
-		userId, adventureId, lat.Float64, lng.Float64,
-	)
+	alreadyVisited, err := awardVisit(db, userId, adventureId, lat.Float64, lng.Float64, int(xpValue.Int64))
 	if err != nil {
 		utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
 			Error: "Failed to record visited adventure.",
 			Code:  1006,
 		})
 		return
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
-			Error: "Failed to record visited adventure.",
-			Code:  1006,
-		})
-		return
-	}
-	alreadyVisited := rowsAffected == 0
-
-	if !alreadyVisited {
-		if err := addXp(db, userId, int(xpValue.Int64)); err != nil {
-			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
-				Error: "Failed to award XP.",
-				Code:  1005,
-			})
-			return
-		}
-		if _, err := completeDailyQuestIfFirst(db, userId); err != nil {
-			utils.WriteJSONError(w, http.StatusInternalServerError, utils.APIError{
-				Error: "Failed to update daily quest.",
-				Code:  1017,
-			})
-			return
-		}
 	}
 
 	totalXp, err := getTotalXp(db, userId)

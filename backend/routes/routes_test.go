@@ -505,6 +505,19 @@ func TestJournalHandler_AwardsBonusRerollToken(t *testing.T) {
 
 	cookie := signUpTestUser(t, mux, "user-1")
 
+	// Consume the daily quest bonus via an unrelated visit first, so the
+	// journal submission below is isolated to its own per-entry bonus
+	// rather than also picking up the one-time daily-quest bonus (see
+	// TestQuestHandler_DoesNotDoubleAwardOnSecondActivityInSameDay for the
+	// same pattern).
+	visitBody, _ := json.Marshal(map[string]string{"adventureId": strconv.FormatInt(advId, 10)})
+	visitReq := authedRequest(http.MethodPost, "/visited", visitBody, cookie)
+	visitRec := httptest.NewRecorder()
+	mux.ServeHTTP(visitRec, visitReq)
+	if visitRec.Code != http.StatusOK {
+		t.Fatalf("mark visited failed with status %d: %s", visitRec.Code, visitRec.Body.String())
+	}
+
 	statusReq := authedRequest(http.MethodGet, "/reroll-status", nil, cookie)
 	statusRec := httptest.NewRecorder()
 	mux.ServeHTTP(statusRec, statusReq)
@@ -916,6 +929,184 @@ func TestGetVisitedHandler_NoVisits_ReturnsEmptyArray(t *testing.T) {
 	}
 	if rec.Body.String() != "[]\n" {
 		t.Errorf("body = %q, want empty JSON array", rec.Body.String())
+	}
+}
+
+func TestPostTrail_PointNearAdventure_MarksVisitedAndAwardsXp(t *testing.T) {
+	db := newTestDB(t)
+	insertTestAdventure(t, db, models.Adventure{Name: "Mount Tam", Type: "hike", Region: "bay-area", Lat: 37.9235, Lng: -122.5965})
+
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+	cookie := signUpTestUser(t, mux, "trail-match")
+
+	// ~30ft from the adventure — well within the 150ft match radius.
+	body, _ := json.Marshal(map[string]interface{}{
+		"points": []map[string]interface{}{
+			{"lat": 37.92353, "lng": -122.5965, "recordedAt": "2026-08-13T10:00:00Z"},
+		},
+	})
+	req := authedRequest(http.MethodPost, "/trail", body, cookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		NewlyVisited []models.Adventure `json:"newlyVisited"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.NewlyVisited) != 1 || resp.NewlyVisited[0].Name != "Mount Tam" {
+		t.Fatalf("newlyVisited = %+v, want [Mount Tam]", resp.NewlyVisited)
+	}
+
+	var visitedCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM visited_adventures WHERE user_id = (SELECT user_id FROM sessions WHERE token = $1)`, cookie.Value).Scan(&visitedCount); err != nil {
+		t.Fatalf("query visited_adventures: %v", err)
+	}
+	if visitedCount != 1 {
+		t.Errorf("visited_adventures count = %d, want 1", visitedCount)
+	}
+}
+
+func TestPostTrail_PointFarFromAdventure_DoesNotMatch(t *testing.T) {
+	db := newTestDB(t)
+	insertTestAdventure(t, db, models.Adventure{Name: "Mount Tam", Type: "hike", Region: "bay-area", Lat: 37.9235, Lng: -122.5965})
+
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+	cookie := signUpTestUser(t, mux, "trail-nomatch")
+
+	// ~5 miles away — outside the 150ft match radius.
+	body, _ := json.Marshal(map[string]interface{}{
+		"points": []map[string]interface{}{
+			{"lat": 37.87, "lng": -122.53, "recordedAt": "2026-08-13T10:00:00Z"},
+		},
+	})
+	req := authedRequest(http.MethodPost, "/trail", body, cookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		NewlyVisited []models.Adventure `json:"newlyVisited"`
+	}
+	json.NewDecoder(rec.Body).Decode(&resp)
+	if len(resp.NewlyVisited) != 0 {
+		t.Errorf("newlyVisited = %+v, want empty", resp.NewlyVisited)
+	}
+}
+
+func TestPostTrail_NoSession_Returns401(t *testing.T) {
+	db := newTestDB(t)
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+
+	body, _ := json.Marshal(map[string]interface{}{"points": []map[string]interface{}{}})
+	req := httptest.NewRequest(http.MethodPost, "/trail", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestGetTrail_ReturnsPointsInChronologicalOrder(t *testing.T) {
+	db := newTestDB(t)
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+	cookie := signUpTestUser(t, mux, "trail-get")
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"points": []map[string]interface{}{
+			{"lat": 37.1, "lng": -122.1, "recordedAt": "2026-08-13T10:00:00Z"},
+			{"lat": 37.2, "lng": -122.2, "recordedAt": "2026-08-13T10:01:00Z"},
+		},
+	})
+	postReq := authedRequest(http.MethodPost, "/trail", body, cookie)
+	postRec := httptest.NewRecorder()
+	mux.ServeHTTP(postRec, postReq)
+	if postRec.Code != http.StatusOK {
+		t.Fatalf("seed POST /trail failed: status %d, body %s", postRec.Code, postRec.Body.String())
+	}
+
+	getReq := authedRequest(http.MethodGet, "/trail", nil, cookie)
+	getRec := httptest.NewRecorder()
+	mux.ServeHTTP(getRec, getReq)
+
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", getRec.Code, getRec.Body.String())
+	}
+
+	var points []models.TrailPoint
+	if err := json.NewDecoder(getRec.Body).Decode(&points); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(points) != 2 {
+		t.Fatalf("len(points) = %d, want 2", len(points))
+	}
+	if points[0].Lat != 37.1 || points[1].Lat != 37.2 {
+		t.Errorf("points = %+v, want chronological order (37.1 then 37.2)", points)
+	}
+}
+
+func TestGetTrail_LimitAndSinceParamsBoundResults(t *testing.T) {
+	db := newTestDB(t)
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, db)
+	cookie := signUpTestUser(t, mux, "trail-bounds")
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"points": []map[string]interface{}{
+			{"lat": 37.1, "lng": -122.1, "recordedAt": "2026-08-13T10:00:00Z"},
+			{"lat": 37.2, "lng": -122.2, "recordedAt": "2026-08-13T10:01:00Z"},
+			{"lat": 37.3, "lng": -122.3, "recordedAt": "2026-08-13T10:02:00Z"},
+		},
+	})
+	postReq := authedRequest(http.MethodPost, "/trail", body, cookie)
+	postRec := httptest.NewRecorder()
+	mux.ServeHTTP(postRec, postReq)
+	if postRec.Code != http.StatusOK {
+		t.Fatalf("seed POST /trail failed: status %d, body %s", postRec.Code, postRec.Body.String())
+	}
+
+	limitReq := authedRequest(http.MethodGet, "/trail?limit=2", nil, cookie)
+	limitRec := httptest.NewRecorder()
+	mux.ServeHTTP(limitRec, limitReq)
+	if limitRec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", limitRec.Code, limitRec.Body.String())
+	}
+	var limitedPoints []models.TrailPoint
+	if err := json.NewDecoder(limitRec.Body).Decode(&limitedPoints); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(limitedPoints) != 2 {
+		t.Fatalf("len(limitedPoints) = %d, want 2", len(limitedPoints))
+	}
+	if limitedPoints[0].Lat != 37.1 || limitedPoints[1].Lat != 37.2 {
+		t.Errorf("limitedPoints = %+v, want the 2 oldest points", limitedPoints)
+	}
+
+	sinceReq := authedRequest(http.MethodGet, "/trail?since=2026-08-13T10:01:30Z", nil, cookie)
+	sinceRec := httptest.NewRecorder()
+	mux.ServeHTTP(sinceRec, sinceReq)
+	if sinceRec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", sinceRec.Code, sinceRec.Body.String())
+	}
+	var sincePoints []models.TrailPoint
+	if err := json.NewDecoder(sinceRec.Body).Decode(&sincePoints); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(sincePoints) != 1 || sincePoints[0].Lat != 37.3 {
+		t.Errorf("sincePoints = %+v, want only the point recorded after the since timestamp", sincePoints)
 	}
 }
 

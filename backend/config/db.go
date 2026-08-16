@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS users (
 	email                    TEXT UNIQUE,
 	password_hash            TEXT,
 	reroll_tokens            INTEGER NOT NULL DEFAULT 5,
-	reroll_reset_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+	reroll_reset_at          TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '1 day'),
 	last_quest_completed_at  DATE
 );
 
@@ -65,6 +65,17 @@ CREATE TABLE IF NOT EXISTS user_achievements (
 	unlocked_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
 	PRIMARY KEY (user_id, achievement_id)
 );
+
+CREATE TABLE IF NOT EXISTS trail_points (
+	id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+	user_id     TEXT NOT NULL,
+	lat         DOUBLE PRECISION NOT NULL,
+	lng         DOUBLE PRECISION NOT NULL,
+	recorded_at TIMESTAMPTZ NOT NULL,
+	created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_trail_points_user ON trail_points(user_id, recorded_at);
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
 	version    INTEGER PRIMARY KEY,
@@ -117,6 +128,40 @@ var migrations = []migration{
 			_, err := tx.Exec(`
 				ALTER TABLE users
 					ADD COLUMN IF NOT EXISTS last_quest_completed_at DATE;
+			`)
+			return err
+		},
+	},
+	{
+		version: 4,
+		name:    "fix_reroll_reset_at_default",
+		up: func(tx *sql.Tx) error {
+			// reroll_reset_at previously defaulted to now(), so a freshly
+			// created user row was born already "expired" per the
+			// `reroll_reset_at <= now()` check in consumeReroll/getRerollStatus
+			// — the very next read reset reroll_tokens back to the daily
+			// allowance, silently discarding any bonus already credited.
+			_, err := tx.Exec(`
+				ALTER TABLE users
+					ALTER COLUMN reroll_reset_at SET DEFAULT (now() + interval '1 day');
+			`)
+			return err
+		},
+	},
+	{
+		version: 5,
+		name:    "add_trail_points",
+		up: func(tx *sql.Tx) error {
+			_, err := tx.Exec(`
+				CREATE TABLE IF NOT EXISTS trail_points (
+					id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+					user_id     TEXT NOT NULL,
+					lat         DOUBLE PRECISION NOT NULL,
+					lng         DOUBLE PRECISION NOT NULL,
+					recorded_at TIMESTAMPTZ NOT NULL,
+					created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+				);
+				CREATE INDEX IF NOT EXISTS idx_trail_points_user ON trail_points(user_id, recorded_at);
 			`)
 			return err
 		},
